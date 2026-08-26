@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --ff-bg: #0a0a0b;
+    --ff-surface: #131316;
+    --ff-surface-2: #1a1a1f;
+    --ff-border: #27272a;
+    --ff-border-hover: #3f3f46;
+    --ff-text: #fafafa;
+    --ff-text-muted: #a1a1aa;
+    --ff-text-dim: #71717a;
+    --ff-primary: #3b82f6;
+    --ff-primary-hover: #2563eb;
+    --ff-primary-dim: #1e3a5f;
+    --ff-success: #10b981;
+    --ff-warning: #f59e0b;
+    --ff-error: #ef4444;
+  }
+
+  * {
+    border-color: var(--ff-border);
+  }
+
+  body {
+    background-color: var(--ff-bg);
+    color: var(--ff-text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background-color: rgba(59, 130, 246, 0.3);
+  }
+}
+
+@layer components {
+  .ff-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .ff-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .ff-scrollbar::-webkit-scrollbar-thumb {
+    background: var(--ff-border);
+    border-radius: 4px;
+  }
+  .ff-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: var(--ff-border-hover);
+  }
+
+  .ff-gradient-text {
+    background: linear-gradient(135deg, #60a5fa 0%, #818cf8 50%, #c084fc 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .ff-glow {
+    box-shadow: 0 0 40px rgba(59, 130, 246, 0.15);
+  }
+
+  .ff-card {
+    background-color: var(--ff-surface);
+    border: 1px solid var(--ff-border);
+    border-radius: 12px;
+  }
+
+  .ff-input {
+    background-color: var(--ff-surface-2);
+    border: 1px solid var(--ff-border);
+    border-radius: 8px;
+    color: var(--ff-text);
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .ff-input:focus {
+    outline: none;
+    border-color: var(--ff-primary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  }
+
+  .ff-btn-primary {
+    background-color: var(--ff-primary);
+    color: white;
+    transition: background-color 0.15s, transform 0.1s;
+  }
+  .ff-btn-primary:hover {
+    background-color: var(--ff-primary-hover);
+  }
+  .ff-btn-primary:active {
+    transform: scale(0.98);
+  }
+
+  .ff-btn-ghost {
+    background-color: transparent;
+    color: var(--ff-text-muted);
+    transition: background-color 0.15s, color 0.15s;
+  }
+  .ff-btn-ghost:hover {
+    background-color: var(--ff-surface-2);
+    color: var(--ff-text);
+  }
+}
+
+@keyframes ff-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ff-fade-in {
+  animation: ff-fade-in 0.3s ease-out;
+}
+
+@keyframes ff-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.ff-pulse {
+  animation: ff-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes ff-spin {
+  to { transform: rotate(360deg); }
+}
+.ff-spin {
+  animation: ff-spin 0.8s linear infinite;
+}
+
+@keyframes ff-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.ff-shimmer {
+  background: linear-gradient(90deg, var(--ff-surface) 25%, var(--ff-surface-2) 50%, var(--ff-surface) 75%);
+  background-size: 200% 100%;
+  animation: ff-shimmer 1.5s infinite;
+}
