@@ -8,15 +8,17 @@ import { Input } from '@/components/ui/Input';
 
 export function SignupForm() {
   const navigate = useNavigate();
-  const { signUp, loading, error, clearError } = useAuthStore();
+  const { signUp, loading, error, clearError, session } = useAuthStore();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
+    setSuccessMessage(null);
     clearError();
 
     if (!fullName || !email || !password) {
@@ -30,7 +32,11 @@ export function SignupForm() {
 
     const { error } = await signUp(email, password, fullName);
     if (!error) {
-      navigate('/dashboard');
+      if (session) {
+        navigate('/dashboard');
+      } else {
+        setSuccessMessage('Account created. Check your email to confirm your account, then sign in.');
+      }
     }
   }
 
@@ -44,6 +50,11 @@ export function SignupForm() {
           <div className="flex items-center gap-2 px-3 py-2.5 mb-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
             <AlertCircle size={16} />
             {formError || error}
+          </div>
+        )}
+        {successMessage && (
+          <div className="flex items-center gap-2 px-3 py-2.5 mb-4 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm">
+            {successMessage}
           </div>
         )}
 

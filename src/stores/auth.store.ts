@@ -5,6 +5,22 @@ import type { Profile } from '@/types';
 
 const supabaseConfigError = 'Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your .env file.';
 
+function formatAuthError(error: { message: string; code?: string; status?: number }): string {
+  if (error.code === 'invalid_credentials' || error.message.toLowerCase().includes('invalid login credentials')) {
+    return 'The email or password is incorrect.';
+  }
+  if (error.code === 'email_not_confirmed' || error.message.toLowerCase().includes('email not confirmed')) {
+    return 'Please confirm your email address before signing in.';
+  }
+  if (error.code === 'user_not_found') {
+    return 'No account was found for this email. Sign up first.';
+  }
+  if (error.status === 429) {
+    return 'Too many attempts. Please wait a moment and try again.';
+  }
+  return error.message;
+}
+
 interface AuthState {
   session: Session | null;
   user: User | null;
@@ -35,10 +51,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ loading: false, error: supabaseConfigError });
       return { error: supabaseConfigError };
     }
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     if (error) {
-      set({ loading: false, error: error.message });
-      return { error: error.message };
+      const message = formatAuthError(error);
+      set({ loading: false, error: message });
+      return { error: message };
     }
     set({ loading: false });
     return { error: null };
@@ -51,13 +68,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return { error: supabaseConfigError };
     }
     const { error } = await supabase.auth.signUp({
-      email,
+      email: email.trim(),
       password,
       options: { data: { full_name: fullName } },
     });
     if (error) {
-      set({ loading: false, error: error.message });
-      return { error: error.message };
+      const message = formatAuthError(error);
+      set({ loading: false, error: message });
+      return { error: message };
     }
     set({ loading: false });
     return { error: null };
@@ -75,10 +93,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ loading: false, error: supabaseConfigError });
       return { error: supabaseConfigError };
     }
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
     if (error) {
-      set({ loading: false, error: error.message });
-      return { error: error.message };
+      const message = formatAuthError(error);
+      set({ loading: false, error: message });
+      return { error: message };
     }
     set({ loading: false });
     return { error: null };
