@@ -45,7 +45,7 @@ export function ThemeEditor() {
         {/* Mode selector */}
         <div>
           <label className="block text-sm font-medium text-[var(--ff-text-muted)] mb-2">Theme Mode</label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 xs:grid-cols-3 gap-2">
             {[
               { value: 'light', icon: Sun, label: 'Light' },
               { value: 'dark', icon: Moon, label: 'Dark' },

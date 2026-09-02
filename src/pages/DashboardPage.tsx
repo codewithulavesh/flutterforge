@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/Input';
 import { ProjectCard } from '@/features/dashboard/ProjectCard';
 import { CreateProjectWizard } from '@/features/dashboard/CreateProjectWizard';
 import { InlineSpinner } from '@/components/ui/Spinner';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 type SortBy = 'updated' | 'created' | 'name';
 
@@ -43,8 +44,9 @@ export function DashboardPage() {
               </div>
               <span className="text-lg font-bold text-white">FlutterForge</span>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-[var(--ff-text-muted)] hidden sm:block">{profile?.email}</span>
+            <div className="flex items-center gap-2 sm:gap-3">
+              <ThemeToggle />
+              <span className="text-sm text-[var(--ff-text-muted)] hidden sm:block max-w-[160px] truncate">{profile?.email}</span>
               <Button variant="ghost" size="sm" icon={<LogOut size={14} />} onClick={signOut}>Sign Out</Button>
             </div>
           </div>

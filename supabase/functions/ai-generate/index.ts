@@ -6,36 +6,62 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-OpenRouter-Key, X-OpenRouter-Model",
 };
 
-const SYSTEM_PROMPT = `You are an expert Flutter developer AI assistant. You generate complete, working Flutter projects from natural-language requests.
+const SYSTEM_PROMPT = `You are Lovable FlutterForge Agent, an elite full-stack Flutter and Supabase architect and software engineer.
+You design, architect, and generate end-to-end, production-grade Flutter mobile and web applications integrated with Supabase backend services.
 
-When the user asks you to create or modify an app, you MUST respond with a JSON object wrapped in <code_block> tags. The JSON has this shape:
+Your primary goal is to build beautiful, robust, pixel-perfect, scalable, and responsive Flutter applications that feel like top-tier commercial apps (like Apple, Stripe, Linear, Airbnb).
 
-{
-  "summary": "Brief description of what was generated",
-  "files": [
-    {
-      "path": "lib/main.dart",
-      "content": "..."
-    },
-    {
-      "path": "pubspec.yaml",
-      "content": "..."
-    }
-  ]
-}
+### CORE PRINCIPLES:
 
-Rules:
-- Always include a complete Flutter entry point at lib/main.dart.
-- Include all Dart files required by the requested screens, navigation, state, and interactions.
-- Include pubspec.yaml with every package used by the generated Dart code.
-- Use Material 3, responsive layouts, meaningful content, and working interactions.
-- Use a cohesive color scheme and avoid purple/indigo defaults unless requested.
-- When modifying an existing project, preserve working files and return changed files with complete contents.
-- Keep paths relative to the project root and return valid JSON only inside the code_block tags.
+1. ARCHITECTURE:
+   - Clean Architecture with Feature-First structure (lib/core/, lib/models/, lib/services/, lib/screens/)
+   - Strict Dart Null Safety, const constructors, proper dispose()
+   - ABSOLUTE BAN ON STUBS: No "// TODO", "// implement", or truncated code
 
-If the user is modifying an existing project, include ALL files in the response (both modified and unchanged), so the output is always a complete project.
+2. SUPABASE:
+   - Initialize Supabase in main.dart with AppConstants
+   - RLS enabled on every table with explicit policies
+   - Real-time subscriptions with .stream(primaryKey: ['id'])
+   - Auth flows: Email/Password, Magic Link, OAuth
 
-Always wrap your JSON response in <code_block> and </code_block> tags.`;
+3. UI/UX:
+   - Material 3 with rich harmonious palettes
+   - flutter_animate for micro-animations
+   - Shimmer skeleton loading states
+   - Glassmorphism cards with subtle shadows
+
+4. OUTPUT FORMAT:
+   - For NEW projects: Generate ALL files in a SINGLE response
+   - Each file MUST be wrapped in markdown code blocks with filepath:
+     \\\`\\\`\\\`dart filepath="lib/main.dart"
+     // Complete file content
+     \\\`\\\`\\\`
+     \\\`\\\`\\\`yaml filepath="pubspec.yaml"
+     # Complete file content
+     \\\`\\\`\\\`
+     \\\`\\\`\\\`sql filepath="supabase/migrations/001_initial_schema.sql"
+     -- Complete SQL with RLS
+     \\\`\\\`\\\`
+   - Every file must be complete and compilable. No placeholders.
+
+5. DEPENDENCIES to include in pubspec.yaml:
+   - supabase_flutter: ^2.8.0
+   - go_router: ^14.6.2
+   - google_fonts: ^6.2.1
+   - provider: ^6.1.2
+   - flutter_animate: ^4.5.0
+   - cached_network_image: ^3.4.1
+   - intl: ^0.19.0`;
+
+// Free model chain - verified available free models on OpenRouter (Aug 2026)
+const FREE_MODEL_CHAIN = [
+  "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "poolside/laguna-s-2.1:free",
+  "cohere/north-mini-code:free",
+  "nvidia/nemotron-3-super-120b-a12b:free",
+  "google/gemma-4-31b-it:free",
+  "nvidia/nemotron-3.5-lightning:free",
+];
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -44,10 +70,10 @@ Deno.serve(async (req: Request) => {
 
   try {
     const openRouterKey = req.headers.get("X-OpenRouter-Key") || Deno.env.get("OPENROUTER_API_KEY");
-    const openRouterModel = req.headers.get("X-OpenRouter-Model") || Deno.env.get("OPENROUTER_MODEL") || "poolside/laguna-s-2.1:free";
+    const requestedModel = req.headers.get("X-OpenRouter-Model");
 
     if (!openRouterKey) {
-      return new Response(JSON.stringify({ error: "Missing OpenRouter API key. Set OPENROUTER_API_KEY env var or pass X-OpenRouter-Key header." }), {
+      return new Response(JSON.stringify({ error: "Missing OpenRouter API key." }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -59,14 +85,29 @@ Deno.serve(async (req: Request) => {
       { role: "system", content: SYSTEM_PROMPT },
     ];
 
-    if (files && files.length > 0 && mode !== "new") {
-      const fileContext = files.map((f: { path: string; content: string }) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
-      conversationMessages.push({
-        role: "system",
-        content: `Here are the current project files:\n\n${fileContext}`,
-      });
+    // Include existing files as context (smart: only paths + first 200 lines per file)
+    if (files && files.length > 0) {
+      if (mode === "new") {
+        // For new generation, include file list summary
+        const fileList = files.map((f: { path: string }) => f.path).join("\n");
+        conversationMessages.push({
+          role: "system",
+          content: `Existing project files:\n${fileList}\n\nGenerate a complete new project, overwriting all files as needed.`,
+        });
+      } else {
+        // For edits, include full file contents
+        const fileContext = files
+          .slice(0, 20) // Limit to 20 files to stay in context
+          .map((f: { path: string; content: string }) => `--- ${f.path} ---\n${f.content.slice(0, 3000)}`)
+          .join("\n\n");
+        conversationMessages.push({
+          role: "system",
+          content: `Here are the current project files:\n\n${fileContext}`,
+        });
+      }
     }
 
+    // Include conversation history for context
     for (const msg of messages) {
       conversationMessages.push({
         role: msg.role,
@@ -74,75 +115,99 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${openRouterKey}`,
-        "HTTP-Referer": "https://flutterforge.app",
-        "X-Title": "FlutterForge AI",
-      },
-      body: JSON.stringify({
-        model: openRouterModel,
-        messages: conversationMessages,
-        temperature: 0.7,
-        max_tokens: 16000,
-      }),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      return new Response(JSON.stringify({ error: `AI request failed: ${response.status} ${errText}` }), {
-        status: 502,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const data = await response.json();
-    const aiContent = data.choices?.[0]?.message?.content ?? "";
-
-    let parsed: { summary: string; files: Array<{ path: string; content: string }> } | null = null;
-
-    const codeBlockMatch = aiContent.match(/<code_block>\s*([\s\S]*?)\s*<\/code_block>/);
-    if (codeBlockMatch) {
+    // Try models in fallback chain
+    let lastError = "";
+    for (const model of (requestedModel ? [requestedModel, ...FREE_MODEL_CHAIN] : FREE_MODEL_CHAIN)) {
       try {
-        parsed = JSON.parse(codeBlockMatch[1]);
-      } catch {
-        const jsonMatch = codeBlockMatch[1].match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          try {
-            parsed = JSON.parse(jsonMatch[0]);
-          } catch {
-            // give up parsing
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${openRouterKey}`,
+            "HTTP-Referer": "https://flutterforge.app",
+            "X-Title": "FlutterForge AI",
+          },
+          body: JSON.stringify({
+            model,
+            messages: conversationMessages,
+            temperature: 0.15,
+            max_tokens: 64000,
+          }),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          lastError = `${model}: ${response.status} ${errText.slice(0, 100)}`;
+          continue;
+        }
+
+        const data = await response.json();
+        const aiContent = data.choices?.[0]?.message?.content ?? "";
+
+        // Parse files from markdown code blocks
+        const files: Array<{ path: string; content: string }> = [];
+        const codeBlockRegex = /```(?:dart|yaml|sql|json|swift|kotlin|xml|gradle)\s+filepath="([^"]+)"\s*\n([\s\S]*?)```/g;
+        let match;
+        while ((match = codeBlockRegex.exec(aiContent)) !== null) {
+          files.push({ path: match[1], content: match[2].trim() });
+        }
+
+        // Fallback: try <code_block> JSON parsing
+        if (files.length === 0) {
+          const codeBlockMatch = aiContent.match(/<code_block>\s*([\s\S]*?)\s*<\/code_block>/);
+          if (codeBlockMatch) {
+            try {
+              const parsed = JSON.parse(codeBlockMatch[1]);
+              if (parsed.files && Array.isArray(parsed.files)) {
+                files.push(...parsed.files);
+              }
+            } catch {
+              const jsonMatch = codeBlockMatch[1].match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                try {
+                  const parsed = JSON.parse(jsonMatch[0]);
+                  if (parsed.files && Array.isArray(parsed.files)) {
+                    files.push(...parsed.files);
+                  }
+                } catch { /* give up */ }
+              }
+            }
           }
         }
-      }
-    } else {
-      const jsonMatch = aiContent.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          parsed = JSON.parse(jsonMatch[0]);
-        } catch {
-          // give up
-        }
-      }
-    }
 
-    if (!parsed || !parsed.files) {
-      return new Response(JSON.stringify({
-        error: "Failed to parse AI response",
-        raw: aiContent.slice(0, 2000),
-      }), {
-        status: 422,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+        // Fallback: try raw JSON
+        if (files.length === 0) {
+          const jsonMatch = aiContent.match(/\{[\s\S]*"files"[\s\S]*\}/);
+          if (jsonMatch) {
+            try {
+              const parsed = JSON.parse(jsonMatch[0]);
+              if (parsed.files && Array.isArray(parsed.files)) {
+                files.push(...parsed.files);
+              }
+            } catch { /* give up */ }
+          }
+        }
+
+        if (files.length > 0) {
+          return new Response(JSON.stringify({
+            summary: `Generated ${files.length} files`,
+            files,
+            model,
+            raw_tokens: data.usage?.total_tokens ?? 0,
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      } catch (e) {
+        lastError = `${model}: ${String(e).slice(0, 100)}`;
+        continue;
+      }
     }
 
     return new Response(JSON.stringify({
-      summary: parsed.summary || "Generated successfully",
-      files: parsed.files,
-      raw_tokens: data.usage?.total_tokens ?? 0,
+      error: `All models failed. Last error: ${lastError}`,
     }), {
+      status: 502,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {

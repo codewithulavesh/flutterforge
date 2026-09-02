@@ -55,7 +55,7 @@ export function ProjectCard({ project }: { project: Project }) {
   return (
     <>
       <div
-        className="ff-card p-4 group cursor-pointer hover:border-[var(--ff-border-hover)] transition-all"
+        className="ff-card p-3 sm:p-4 group cursor-pointer hover:border-[var(--ff-border-hover)] transition-all"
         onClick={() => navigate(`/project/${project.id}`)}
       >
         <div className="flex items-start justify-between mb-3">
@@ -65,7 +65,7 @@ export function ProjectCard({ project }: { project: Project }) {
           <div onClick={(e) => e.stopPropagation()}>
             <Dropdown
               trigger={
-                <button className="p-1.5 rounded-md text-[var(--ff-text-dim)] hover:text-white hover:bg-[var(--ff-surface-2)] opacity-0 group-hover:opacity-100 transition-opacity">
+                <button className="p-1.5 rounded-md text-[var(--ff-text-dim)] hover:text-white hover:bg-[var(--ff-surface-2)] opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                   <MoreVertical size={16} />
                 </button>
               }

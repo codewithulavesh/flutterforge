@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { Sparkles, Menu, X } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 export function LandingNav() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -26,6 +27,7 @@ export function LandingNav() {
           </div>
 
           <div className="hidden md:flex items-center gap-3">
+            <ThemeToggle />
             <Link to="/login">
               <Button variant="ghost" size="sm">Sign In</Button>
             </Link>
@@ -34,9 +36,12 @@ export function LandingNav() {
             </Link>
           </div>
 
-          <button className="md:hidden text-white" onClick={() => setMobileOpen(!mobileOpen)}>
-            {mobileOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
+          <div className="flex md:hidden items-center gap-2">
+            <ThemeToggle />
+            <button className="text-[var(--ff-text)]" onClick={() => setMobileOpen(!mobileOpen)}>
+              {mobileOpen ? <X size={24} /> : <Menu size={24} />}
+            </button>
+          </div>
         </div>
 
         {mobileOpen && (

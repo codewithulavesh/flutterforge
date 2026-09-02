@@ -8,6 +8,8 @@ interface TerminalState {
   isGenerating: boolean;
   isBuilding: boolean;
   buildLogs: string[];
+  currentPhase: string | null;
+  generationError: string | null;
 
   addLine: (line: Omit<TerminalLine, 'id' | 'timestamp'>) => void;
   clearLines: () => void;
@@ -19,6 +21,8 @@ interface TerminalState {
   setBuilding: (building: boolean) => void;
   addBuildLog: (log: string) => void;
   clearBuildLogs: () => void;
+  setCurrentPhase: (phase: string | null) => void;
+  setGenerationError: (error: string | null) => void;
 }
 
 export const useTerminalStore = create<TerminalState>((set) => ({
@@ -28,6 +32,8 @@ export const useTerminalStore = create<TerminalState>((set) => ({
   isGenerating: false,
   isBuilding: false,
   buildLogs: [],
+  currentPhase: null,
+  generationError: null,
 
   addLine: (line) => set((s) => ({
     lines: [...s.lines, { ...line, id: crypto.randomUUID(), timestamp: Date.now() }],
@@ -47,4 +53,6 @@ export const useTerminalStore = create<TerminalState>((set) => ({
   setBuilding: (building) => set({ isBuilding: building }),
   addBuildLog: (log) => set((s) => ({ buildLogs: [...s.buildLogs, log] })),
   clearBuildLogs: () => set({ buildLogs: [] }),
+  setCurrentPhase: (phase) => set({ currentPhase: phase }),
+  setGenerationError: (error) => set({ generationError: error }),
 }));

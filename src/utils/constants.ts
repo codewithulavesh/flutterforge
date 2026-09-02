@@ -90,6 +90,7 @@ export const SIDEBAR_SECTIONS = [
       { id: 'components', label: 'Components', icon: 'Blocks' },
       { id: 'theme', label: 'Theme', icon: 'Palette' },
       { id: 'dependencies', label: 'Dependencies', icon: 'Package' },
+      { id: 'connectors', label: 'Connectors', icon: 'Plug' },
     ],
   },
   {

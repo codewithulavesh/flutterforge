@@ -3,6 +3,8 @@ import { supabase } from '@/services/supabase';
 import type { Project, ProjectFile, ProjectVersion, AIConversation, AIMessage, GenerationTask, Build, Dependency, Deployment, FileChange } from '@/types';
 import { useAuthStore } from './auth.store';
 import { generateFlutterProjectFiles } from '@/utils/flutterTemplates';
+import { FlutterSupabaseAgent, AgentContextBuilder, keyPool } from '@/agent';
+import { usePreviewStore } from './preview.store';
 
 interface ProjectState {
   projects: Project[];
@@ -37,6 +39,7 @@ interface ProjectState {
   loadVersions: (projectId: string) => Promise<void>;
   createVersion: (projectId: string, label: string, description: string) => Promise<void>;
   restoreVersion: (projectId: string, versionId: string) => Promise<void>;
+  restoreFile: (projectId: string, filePath: string, content?: string) => Promise<void>;
   loadBuilds: (projectId: string) => Promise<void>;
   loadDeployments: (projectId: string) => Promise<void>;
   clearCurrent: () => void;
@@ -326,8 +329,33 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       throw new Error('Project is still loading. Please try again in a moment.');
     }
 
-    const isInitialGen = get().files.length === 0;
-    const changedFiles = await requestAIGeneration(get().messages, get().files, isInitialGen);
+    const isFirstPrompt = get().messages.length === 1;
+    const hasStarterOnly = get().files.length > 0 && get().files.length <= 6;
+    const isInitialGen = isFirstPrompt || hasStarterOnly;
+    
+    if (!isInitialGen) {
+      try {
+        await get().createVersion(projectId, `Before: ${content.slice(0, 30)}`, 'Auto checkpoint before generation');
+      } catch {
+        // Continue if version creation fails
+      }
+    } else {
+      onProgress?.('Initial generation from wizard Describe - full app synthesis');
+    }
+
+    // Build conversation history for context
+    const conversationHistory = get().messages.map((m) => ({ role: m.role, content: m.content }));
+    const stateManagement = project.state_management || 'provider';
+
+    const changedFiles = await requestAIGeneration(
+      get().messages,
+      get().files,
+      isInitialGen,
+      project.name,
+      stateManagement,
+      conversationHistory,
+      onProgress,
+    );
     onProgress?.(`AI returned ${changedFiles.length} file${changedFiles.length === 1 ? '' : 's'}`);
 
     for (const change of changedFiles) {
@@ -344,6 +372,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }
     }
 
+    const nextActionPrompts = generateNextActionPrompts(content, changedFiles);
     const assistantContent = buildAssistantResponse(content, changedFiles);
     const assistantMessage: AIMessage = {
       id: crypto.randomUUID(),
@@ -352,7 +381,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       content: assistantContent,
       tool_calls: null,
       changed_files: changedFiles,
-      metadata: { fileCount: changedFiles.length },
+      metadata: { fileCount: changedFiles.length, nextActionPrompts },
       created_at: new Date().toISOString(),
     };
     set((state) => ({ messages: [...state.messages, assistantMessage] }));
@@ -362,11 +391,34 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       role: 'assistant',
       content: assistantContent,
       changed_files: changedFiles,
+      metadata: { nextActionPrompts },
     });
 
     await get().loadFiles(projectId);
     onProgress?.('Files saved and explorer refreshed');
+
+    // Auto-build preview after generation (like Lovable)
+    onProgress?.('Auto-building preview...');
+    try {
+      const previewStore = usePreviewStore.getState();
+      const currentSession = previewStore.getSession(projectId);
+      if (!currentSession || currentSession.status === 'stopped' || currentSession.status === 'failed') {
+        const currentFiles = get().files
+          .filter((f) => !f.is_directory)
+          .map((f) => ({ path: f.path, content: f.content }));
+        if (currentFiles.length > 0) {
+          await previewStore.build(projectId, currentFiles, {
+            supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+            supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+          });
+          onProgress?.('Preview build started - check Preview tab');
+        }
+      }
+    } catch {
+      // Auto-build is best-effort — don't block the flow
+    }
   },
+
 
   loadDependencies: async (projectId) => {
     const { data } = await supabase
@@ -466,6 +518,25 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     await get().loadFiles(projectId);
   },
 
+  restoreFile: async (projectId, filePath, content) => {
+    if (content !== undefined) {
+      await get().saveFile(projectId, filePath, content);
+      await get().loadFiles(projectId);
+      return;
+    }
+
+    // Lookup in previous versions
+    const prevVersions = get().versions;
+    for (const v of prevVersions) {
+      const snap = v.file_snapshot?.[filePath];
+      if (snap?.content !== undefined) {
+        await get().saveFile(projectId, filePath, snap.content);
+        await get().loadFiles(projectId);
+        return;
+      }
+    }
+  },
+
   loadBuilds: async (projectId) => {
     const { data } = await supabase
       .from('builds')
@@ -501,51 +572,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   clearError: () => set({ error: null }),
 }));
 
-function extractScreens(prompt: string): string[] {
-  const lower = prompt.toLowerCase();
-  const screens: string[] = [];
-  const screenKeywords: Record<string, string> = {
-    'splash': 'splash',
-    'login': 'login',
-    'sign in': 'login',
-    'signup': 'signup',
-    'sign up': 'signup',
-    'register': 'signup',
-    'home': 'home',
-    'search': 'search',
-    'category': 'categories',
-    'categories': 'categories',
-    'product': 'products',
-    'products': 'products',
-    'product detail': 'product_detail',
-    'product details': 'product_detail',
-    'cart': 'cart',
-    'checkout': 'checkout',
-    'order': 'orders',
-    'orders': 'orders',
-    'profile': 'profile',
-    'settings': 'settings',
-    'restaurant': 'restaurants',
-    'restaurants': 'restaurants',
-    'menu': 'menu',
-    'dashboard': 'dashboard',
-    'chat': 'chat',
-    'feed': 'feed',
-    'transaction': 'transactions',
-    'transactions': 'transactions',
-    'budget': 'budget',
-  };
-
-  for (const [keyword, screen] of Object.entries(screenKeywords)) {
-    if (lower.includes(keyword) && !screens.includes(screen)) {
-      screens.push(screen);
-    }
-  }
-
-  if (screens.length === 0) screens.push('home');
-  return screens;
-}
-
 function buildAssistantResponse(prompt: string, changes: FileChange[]): string {
   const created = changes.filter((c) => c.action === 'created');
   const modified = changes.filter((c) => c.action === 'modified');
@@ -565,255 +591,134 @@ function buildAssistantResponse(prompt: string, changes: FileChange[]): string {
   return response;
 }
 
-async function generateIncrementalChanges(prompt: string, _files: ProjectFile[]): Promise<FileChange[]> {
+export function generateNextActionPrompts(prompt: string, changes: FileChange[]): string[] {
   const lower = prompt.toLowerCase();
-  const changes: FileChange[] = [];
+  const prompts: string[] = [];
 
-  if (lower.includes('dark') || lower.includes('theme')) {
-    changes.push({
-      path: 'lib/core/theme/app_theme.dart',
-      action: 'modified',
-      content: `import 'package:flutter/material.dart';
+  const hasSql = changes.some((c) => c.path.endsWith('.sql'));
+  const hasAuth = changes.some((c) => c.path.includes('auth'));
+  const hasCart = changes.some((c) => c.path.includes('cart'));
 
-class AppTheme {
-  static const Color primary = Color(0xFF3B82F6);
-  static const Color secondary = Color(0xFF8B5CF6);
-  static const Color background = Color(0xFF111827);
-  static const Color surface = Color(0xFF1F2937);
-  static const Color error = Color(0xFFEF4444);
-  static const Color success = Color(0xFF10B981);
-  static const Color warning = Color(0xFFF59E0B);
-  static const Color text = Color(0xFFF9FAFB);
+  if (!lower.includes('dark') && !lower.includes('theme')) {
+    prompts.push('Add an animated Dark/Light Mode toggle');
+  }
 
-  static ThemeData get lightTheme => ThemeData(
-    useMaterial3: true,
-    colorScheme: ColorScheme.fromSeed(seedColor: primary, brightness: Brightness.light),
-    scaffoldBackgroundColor: background,
-  );
+  if (!hasAuth && !lower.includes('auth') && !lower.includes('login')) {
+    prompts.push('Add Supabase Auth with login, signup and password recovery');
+  }
 
-  static ThemeData get darkTheme => ThemeData(
-    useMaterial3: true,
-    colorScheme: ColorScheme.fromSeed(seedColor: primary, brightness: Brightness.dark),
-    scaffoldBackgroundColor: const Color(0xFF111827),
-  );
+  if (lower.includes('ecommerce') || lower.includes('shop') || hasCart) {
+    prompts.push('Add Stripe checkout flow and order receipt history');
+    prompts.push('Add category filter and price range slider');
+  } else if (lower.includes('crypto') || lower.includes('wallet')) {
+    prompts.push('Add interactive price history chart with 24h P&L');
+    prompts.push('Add real-time price alerts in Supabase');
+  } else if (lower.includes('chat') || lower.includes('ai')) {
+    prompts.push('Add streaming typewriter response effect');
+    prompts.push('Add voice input and audio message recorder');
+  } else {
+    prompts.push('Add a search bar with instant autocomplete');
+    prompts.push('Add real-time Supabase subscription stream');
+  }
+
+  if (hasSql) {
+    prompts.push('Generate mock seed data SQL for instant testing');
+  }
+
+  return prompts.slice(0, 4);
 }
-`,
-    });
-  }
 
-  if (lower.includes('search bar') || lower.includes('search')) {
-    changes.push({
-      path: 'lib/screens/home/home_screen.dart',
-      action: 'modified',
-      content: `import 'package:flutter/material.dart';
-import '../../core/theme/app_theme.dart';
-
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Home')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(
-              decoration: InputDecoration(
-                hintText: 'Search...',
-                prefixIcon: const Icon(Icons.search),
-                filled: true,
-                fillColor: AppTheme.surface,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: ListView.builder(
-                itemCount: 10,
-                itemBuilder: (context, index) => Card(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  child: ListTile(
-                    leading: Container(
-                      width: 56,
-                      height: 56,
-                      decoration: BoxDecoration(
-                        color: AppTheme.primary.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(Icons.widgets, color: AppTheme.primary),
-                    ),
-                    title: Text('Item \${index + 1}'),
-                    subtitle: const Text('Product description'),
-                    trailing: const Icon(Icons.chevron_right),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-`,
-    });
-  }
-
-  if (lower.includes('rounded') || lower.includes('card')) {
-    changes.push({
-      path: 'lib/widgets/app_card.dart',
-      action: 'created',
-      content: `import 'package:flutter/material.dart';
-
-class AppCard extends StatelessWidget {
-  final Widget child;
-  final EdgeInsetsGeometry? padding;
-  final VoidCallback? onTap;
-
-  const AppCard({
-    super.key,
-    required this.child,
-    this.padding,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Theme.of(context).cardColor,
-      borderRadius: BorderRadius.circular(16),
-      elevation: 2,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: padding ?? const EdgeInsets.all(16),
-          child: child,
-        ),
-      ),
-    );
-  }
-}
-`,
-    });
-  }
-
-  if (lower.includes('supabase') || lower.includes('auth')) {
-    changes.push({
-      path: 'lib/services/auth_service.dart',
-      action: 'created',
-      content: `import 'package:flutter/material.dart';
-
-class AuthService extends ChangeNotifier {
-  bool _isAuthenticated = false;
-  bool get isAuthenticated => _isAuthenticated;
-
-  Future<bool> signIn(String email, String password) async {
-    await Future.delayed(const Duration(seconds: 1));
-    _isAuthenticated = true;
-    notifyListeners();
-    return true;
-  }
-
-  Future<bool> signUp(String email, String password) async {
-    await Future.delayed(const Duration(seconds: 1));
-    _isAuthenticated = true;
-    notifyListeners();
-    return true;
-  }
-
-  Future<void> signOut() async {
-    _isAuthenticated = false;
-    notifyListeners();
-  }
-}
-`,
-    });
-    changes.push({
-      path: 'pubspec.yaml',
-      action: 'modified',
-      content: `name: flutter_app
-description: A Flutter application generated by FlutterForge
-publish_to: 'none'
-version: 1.0.0+1
-
-environment:
-  sdk: '>=3.0.0 <4.0.0'
-
-dependencies:
-  flutter:
-    sdk: flutter
-  go_router: ^14.0.0
-  supabase_flutter: ^2.0.0
-
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^4.0.0
-
-flutter:
-  uses-material-design: true
-`,
-    });
-  }
-
-  return changes;
-}
 
 async function requestAIGeneration(
   messages: AIMessage[],
   files: ProjectFile[],
   isInitialGeneration: boolean,
+  projectName = 'FlutterForgeApp',
+  stateManagement = 'provider',
+  conversationHistory: Array<{ role: string; content: string }> = [],
+  onProgress?: (msg: string) => void,
 ): Promise<FileChange[]> {
-  const { data, error } = await supabase.functions.invoke('ai-generate', {
-    body: {
-      messages: messages.map((message) => ({
-        role: message.role,
-        content: message.content,
-      })),
-      files: files.filter((file) => !file.is_directory).map((file) => ({
-        path: file.path,
-        content: file.content,
-      })),
-      mode: isInitialGeneration ? 'new' : 'edit',
+  // TIER 1: Edge Function (real AI generation with model fallback chain)
+  try {
+    onProgress?.('Sending request to AI (Nemotron Ultra + fallback models)...');
+    const edgeKey = keyPool.getNextKey();
+    const invokePromise = supabase.functions.invoke('ai-generate', {
+      body: {
+        messages: messages.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+        files: files.filter((file) => !file.is_directory).map((file) => ({
+          path: file.path,
+          content: file.content,
+        })),
+        mode: isInitialGeneration ? 'new' : 'edit',
+      },
+      headers: {
+        'X-OpenRouter-Key': edgeKey,
+      },
+    });
+    const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Edge timeout 90s')), 90000));
+    const { data, error } = await Promise.race([invokePromise, timeoutPromise]) as Awaited<typeof invokePromise>;
+
+    if (!error && data) {
+      const generatedFiles = (data as { files?: Array<{ path?: unknown; content?: unknown }>; model?: string } | null)?.files;
+      const usedModel = (data as { model?: string })?.model;
+      if (Array.isArray(generatedFiles) && generatedFiles.length > 0) {
+        onProgress?.(`AI generated ${generatedFiles.length} files using ${usedModel || 'unknown model'}`);
+        const existingPaths = new Set(files.map((file) => file.path));
+        return generatedFiles
+          .filter((file: { path?: unknown; content?: unknown }): file is { path: string; content: string } => typeof file.path === 'string' && typeof file.content === 'string')
+          .map((file) => ({
+            path: file.path,
+            content: file.content,
+            action: existingPaths.has(file.path) ? 'modified' as const : 'created' as const,
+          }));
+      }
+      onProgress?.('Edge returned empty - trying local AI agent...');
+    } else if (error) {
+      onProgress?.(`Edge failed (${(error as Error).message?.slice(0, 60)}) - trying local AI agent...`);
+    }
+  } catch (e) {
+    onProgress?.(`Edge timeout/error (${(e as Error).message?.slice(0, 40)}) - trying local AI agent...`);
+  }
+
+  // TIER 2: Local FlutterSupabaseAgent (client-side AI with model fallback chain)
+  onProgress?.('Generating with local AI agent (Nemotron Ultra + fallback models)...');
+  const latestUserPrompt = messages.filter((m) => m.role === 'user').pop()?.content || 'Create Flutter application';
+  const context = AgentContextBuilder.buildContext({
+    projectId: 'active-project',
+    projectName,
+    files,
+    conversationHistory: messages.map((m) => ({ role: m.role, content: m.content })),
+    supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+    supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+  });
+
+  // Detect if this is an incremental edit (follow-up prompt after initial generation)
+  const isIncremental = !isInitialGeneration && files.length > 6;
+
+  const result = await FlutterSupabaseAgent.execute(latestUserPrompt, context, {
+    enableAutoHealing: true,
+    stateManagement: stateManagement as 'provider' | 'riverpod' | 'bloc' | 'change_notifier',
+    isIncremental,
+    conversationHistory,
+    modelConfig: {
+      provider: 'custom',
+      modelName: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      apiKey: keyPool.getNextKey(),
+    },
+    onEvent: (event) => {
+      onProgress?.(event.message);
     },
   });
 
-  if (error) {
-    let detail = error.message;
-    const context = (error as unknown as { context?: Response }).context;
-    if (context) {
-      try {
-        const body = await context.clone().json() as { error?: string };
-        detail = body.error ?? detail;
-      } catch {
-        // Keep the SDK message when the function response is not JSON.
-      }
-    }
-    throw new Error(`AI generation failed: ${detail}`);
-  }
-  const generatedFiles = (data as { files?: Array<{ path?: unknown; content?: unknown }> } | null)?.files;
-  if (!Array.isArray(generatedFiles)) {
-    throw new Error('AI generation returned no files. Check the ai-generate Edge Function response.');
-  }
-
-  const existingPaths = new Set(files.map((file) => file.path));
-  const changes = generatedFiles
-    .filter((file: { path?: unknown; content?: unknown }): file is { path: string; content: string } => typeof file.path === 'string' && typeof file.content === 'string')
-    .map((file) => ({
-      path: file.path,
-      content: file.content,
-      action: existingPaths.has(file.path) ? 'modified' as const : 'created' as const,
-    }));
-
-  if (changes.length === 0) {
-    throw new Error('AI generation returned an empty file list. Try a more specific prompt.');
-  }
-
-  return changes;
+  const existingFileMap = new Map(files.map((file) => [file.path, file.content]));
+  return result.files.map((file) => ({
+    path: file.path,
+    content: file.content,
+    oldContent: existingFileMap.get(file.path),
+    action: existingFileMap.has(file.path) ? ('modified' as const) : ('created' as const),
+  }));
 }
+

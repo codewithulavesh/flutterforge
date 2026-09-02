@@ -84,6 +84,7 @@ export interface FileChange {
   action: 'created' | 'modified' | 'deleted';
   content?: string;
   previous_content?: string;
+  oldContent?: string;
 }
 
 export interface GenerationTask {
@@ -210,4 +211,29 @@ export interface Template {
   icon: string;
   color: string;
   features: string[];
+}
+
+export type ConnectorStatus = 'connected' | 'disconnected' | 'error' | 'configuring';
+
+export interface ConnectorField {
+  key: string;
+  label: string;
+  type: 'text' | 'password' | 'url' | 'select';
+  placeholder?: string;
+  required?: boolean;
+  options?: string[];
+  value: string;
+}
+
+export interface Connector {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  color: string;
+  category: 'database' | 'auth' | 'storage' | 'ai' | 'payment' | 'analytics' | 'messaging' | 'other';
+  status: ConnectorStatus;
+  fields: ConnectorField[];
+  docsUrl?: string;
+  connectedAt?: string;
 }

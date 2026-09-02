@@ -61,16 +61,16 @@ const FEATURES = [
 
 export function Features() {
   return (
-    <section id="features" className="py-24 relative">
+    <section id="features" className="py-12 sm:py-24 relative">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-2xl mx-auto mb-16">
-          <h2 className="text-4xl font-bold text-white mb-4">Everything you need to build Flutter apps</h2>
-          <p className="text-lg text-[var(--ff-text-muted)]">
+        <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-8 sm:mb-16">
+          <h2 className="text-2xl sm:text-3xl lg:text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-3 sm:mb-4">Everything you need to build Flutter apps</h2>
+          <p className="text-base sm:text-base sm:text-lg text-[var(--ff-text-muted)] px-2">
             FlutterForge is a complete development environment, not just a code generator. From idea to deployment, all in one place.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           {FEATURES.map((feature) => {
             const Icon = feature.icon;
             return (

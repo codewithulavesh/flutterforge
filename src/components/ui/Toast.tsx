@@ -38,12 +38,12 @@ export function ToastContainer() {
   };
 
   return (
-    <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2">
+    <div className="fixed bottom-2 sm:bottom-4 right-2 sm:right-4 left-2 sm:left-auto z-[100] flex flex-col gap-2">
       {toasts.map((t) => (
         <div
           key={t.id}
           className={cn(
-            'flex items-center gap-3 px-4 py-3 rounded-lg border ff-card ff-fade-in min-w-[280px] max-w-md'
+            'flex items-center gap-3 px-4 py-3 rounded-lg border ff-card ff-fade-in max-w-[calc(100vw-16px)] sm:min-w-[280px] sm:max-w-md'
           )}
         >
           {icons[t.type]}

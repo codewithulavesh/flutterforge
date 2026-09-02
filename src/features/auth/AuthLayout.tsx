@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Sparkles } from 'lucide-react';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 export function AuthLayout({ children }: { children: ReactNode }) {
   return (
@@ -51,8 +52,11 @@ export function AuthLayout({ children }: { children: ReactNode }) {
       </div>
 
       {/* Right side - form */}
-      <div className="flex-1 flex items-center justify-center p-6 lg:p-12">
-        <div className="w-full max-w-md">
+      <div className="flex-1 flex flex-col items-center justify-center p-6 lg:p-12 relative">
+        <div className="absolute top-4 right-4 sm:top-6 sm:right-6">
+          <ThemeToggle />
+        </div>
+        <div className="w-full max-w-md flex-1 flex flex-col justify-center">
           <div className="lg:hidden mb-8">
             <Link to="/" className="flex items-center gap-2">
               <div className="w-9 h-9 rounded-lg bg-[var(--ff-primary)] flex items-center justify-center">

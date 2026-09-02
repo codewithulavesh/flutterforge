@@ -1,0 +1,77 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: preview-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    deploy:
+      resources:
+        limits: { memory: 256M, cpus: '0.25' }
+        reservations: { memory: 128M }
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 3
+    networks: [preview-net]
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: preview-api
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/previews:/tmp/previews
+      - preview-cache:/tmp/build-cache
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - PREVIEW_TTL_MINUTES=15
+      - PREVIEW_MAX_CONCURRENT_BUILDS=2
+      - PREVIEW_MAX_RUNTIMES=20
+      - PREVIEW_MAX_PER_USER=2
+      - SUPABASE_URL=${SUPABASE_URL:-https://your-project.supabase.co}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-your-anon-key}
+      - PREVIEW_DOMAIN=${PREVIEW_DOMAIN:-localhost}
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: '0.75' }
+        reservations: { memory: 256M }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || wget -qO- http://127.0.0.1:3001/health || exit 1"]
+      interval: 15s
+      retries: 5
+      start_period: 15s
+    networks: [preview-net]
+
+  proxy:
+    image: nginx:alpine
+    container_name: preview-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      # Expose 8080 for direct preview debugging
+      - "8080:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api:
+        condition: service_started
+    deploy:
+      resources:
+        limits: { memory: 128M, cpus: '0.25' }
+    networks: [preview-net]
+
+volumes:
+  preview-cache:
+    driver: local
+
+networks:
+  preview-net:
+    driver: bridge

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "gemini-web2api": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Gemini Web2API (local)",
+      "options": {
+        "baseURL": "http://localhost:8081/v1",
+        "apiKey": "sk-gemini"
+      },
+      "models": {
+        "gemini-3.6-flash": { "name": "Gemini 3.6 Flash" },
+        "gemini-3.5-flash": { "name": "Gemini 3.5 Flash" },
+        "gemini-3.5-flash-thinking": { "name": "Gemini 3.5 Flash Thinking (20k)" },
+        "gemini-3.5-flash-thinking-lite": { "name": "Gemini Thinking Lite" },
+        "gemini-3.1-pro": { "name": "Gemini 3.1 Pro" },
+        "gemini-auto": { "name": "Gemini Auto" },
+        "gemini-flash-lite": { "name": "Gemini Flash Lite" }
+      }
+    },
+    "deepseek-web2api": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "DeepSeek Web2API (YWA real PoW)",
+      "options": {
+        "baseURL": "http://localhost:8080/v1",
+        "apiKey": "sk-deepseek"
+      },
+      "models": {
+        "deepseek-chat": { "name": "DeepSeek V3 Chat" },
+        "deepseek-reasoner": { "name": "DeepSeek R1 Reasoner" },
+        "deepseek-chat-search": { "name": "DeepSeek Chat + Search" },
+        "deepseek-v3": { "name": "DeepSeek V3 (alias)" }
+      }
+    }
+  },
+  "model": "gemini-web2api/gemini-3.5-flash-thinking"
+}

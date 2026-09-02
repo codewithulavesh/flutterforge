@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from '@/services/supabase';
 import { useAuthStore } from '@/stores/auth.store';
+import { useThemeStore } from '@/stores/theme.store';
 import { ProtectedRoute } from '@/app/ProtectedRoute';
 import { PublicOnlyRoute } from '@/app/PublicOnlyRoute';
 import { LandingPage } from '@/pages/LandingPage';
@@ -15,6 +16,12 @@ import { FullPageSpinner } from '@/components/ui/Spinner';
 
 export default function App() {
   const { setSession, initialized } = useAuthStore();
+  const { theme, setTheme } = useThemeStore();
+
+  useEffect(() => {
+    const saved = (localStorage.getItem('ff-theme') as 'light' | 'dark' | null) || theme;
+    setTheme(saved);
+  }, [setTheme]);
 
   useEffect(() => {
     if (!isSupabaseConfigured) {

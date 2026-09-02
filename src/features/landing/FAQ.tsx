@@ -7,11 +7,11 @@ export function FAQ() {
   const [openIndex, setOpenIndex] = useState<number | null>(0);
 
   return (
-    <section id="faq" className="py-24 bg-[var(--ff-surface)]/30">
+    <section id="faq" className="py-12 sm:py-12 sm:py-24 bg-[var(--ff-surface)]/30">
       <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center mb-16">
-          <h2 className="text-4xl font-bold text-white mb-4">Frequently asked questions</h2>
-          <p className="text-lg text-[var(--ff-text-muted)]">
+        <div className="text-center mb-8 sm:mb-8 sm:mb-16">
+          <h2 className="text-2xl sm:text-3xl lg:text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-4">Frequently asked questions</h2>
+          <p className="text-base sm:text-base sm:text-lg text-[var(--ff-text-muted)]">
             Everything you need to know about FlutterForge.
           </p>
         </div>
@@ -21,7 +21,7 @@ export function FAQ() {
             <div key={i} className="ff-card overflow-hidden">
               <button
                 onClick={() => setOpenIndex(openIndex === i ? null : i)}
-                className="flex items-center justify-between w-full p-5 text-left"
+                className="flex items-center justify-between w-full p-4 sm:p-5 text-left"
               >
                 <span className="text-sm font-medium text-white">{faq.question}</span>
                 <ChevronDown

@@ -81,7 +81,7 @@ export function VersionsView() {
                   </div>
                   <button
                     onClick={() => handleRestore(version.id)}
-                    className="opacity-0 group-hover:opacity-100 flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs text-[var(--ff-text-muted)] hover:text-[var(--ff-primary)] hover:bg-[var(--ff-primary)]/10 transition-all"
+                    className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs text-[var(--ff-text-muted)] hover:text-[var(--ff-primary)] hover:bg-[var(--ff-primary)]/10 transition-all"
                   >
                     <RotateCcw size={12} />
                     Restore

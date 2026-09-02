@@ -50,11 +50,30 @@ export function CreateProjectWizard({ open, onClose }: { open: boolean; onClose:
     });
     setLoading(false);
     if (project) {
+      // Build rich agent prompt from wizard Describe + Configure + Template
+      const richPrompt = `Build a production-grade Flutter ${selectedTemplate.name} app called "${name.trim()}" with Supabase backend.\n\n` +
+        `Project: ${name.trim()}\n` +
+        `Template: ${selectedTemplate.id} - ${selectedTemplate.description}\n` +
+        `Description: ${description.trim()}\n` +
+        `Platform: ${platform}\n` +
+        `State Management: ${stateManagement}\n` +
+        `Theme Mode: ${themeMode}\n` +
+        `Flutter Version: ${flutterVersion}\n\n` +
+        `Requirements: Generate complete Flutter code (lib/main.dart with Supabase.initialize, pubspec.yaml, Material 3 theme, GoRouter, models, services with RLS, screens) + supabase/migrations SQL with Row Level Security. Make it runnable and validated.`;
+      const promptToSend = description.trim();
       reset();
       onClose();
-      toast('success', 'Project created! Loading workspace...');
+      toast('success', 'Project created! Generating app from your description...');
       navigate(`/project/${project.id}`, {
-        state: { initialPrompt: description.trim() },
+        state: {
+          initialPrompt: promptToSend,
+          richPrompt,
+          template: selectedTemplate.id,
+          projectName: name.trim(),
+          platform,
+          stateManagement,
+          themeMode,
+        },
       });
     }
   }
@@ -62,7 +81,7 @@ export function CreateProjectWizard({ open, onClose }: { open: boolean; onClose:
   return (
     <Modal open={open} onClose={() => { reset(); onClose(); }} title="Create New Flutter App" size="xl">
       {/* Step indicator */}
-      <div className="flex items-center gap-2 mb-6">
+      <div className="flex flex-wrap items-center gap-2 mb-6">
         {['Template', 'Describe', 'Configure'].map((label, i) => (
           <div key={label} className="flex items-center gap-2">
             <div className={cn(
@@ -81,7 +100,7 @@ export function CreateProjectWizard({ open, onClose }: { open: boolean; onClose:
       {step === 0 && (
         <div className="ff-fade-in">
           <p className="text-sm text-[var(--ff-text-muted)] mb-4">Choose a template to start from:</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {TEMPLATES.map((template) => {
               const Icon = (Icons as unknown as Record<string, LucideIcon>)[template.icon] ?? Icons.FileCode2;
               const isSelected = selectedTemplate?.id === template.id;
@@ -141,7 +160,7 @@ export function CreateProjectWizard({ open, onClose }: { open: boolean; onClose:
       {/* Step 2: Configure */}
       {step === 2 && (
         <div className="ff-fade-in space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-[var(--ff-text-muted)] mb-1.5">Flutter Version</label>
               <select className="ff-input w-full px-3 py-2.5 text-sm" value={flutterVersion} onChange={(e) => setFlutterVersion(e.target.value)}>

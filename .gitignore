@@ -22,3 +22,6 @@ dist-ssr
 *.sw?
 .env
 supabase/.temp/
+deepseek-web2api-main/
+ywa-deepseek-web2api/
+# local AI proxy keep

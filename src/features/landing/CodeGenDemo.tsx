@@ -33,9 +33,9 @@ export function CodeGenDemo() {
   return (
     <section className="py-24">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-2xl mx-auto mb-16">
-          <h2 className="text-4xl font-bold text-white mb-4">Production-ready Dart code</h2>
-          <p className="text-lg text-[var(--ff-text-muted)]">
+        <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-16">
+          <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-4">Production-ready Dart code</h2>
+          <p className="text-base sm:text-lg text-[var(--ff-text-muted)]">
             Every file is real, compilable Flutter code with proper architecture and null safety.
           </p>
         </div>

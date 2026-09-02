@@ -1,0 +1,17 @@
+# Cloudflare Tunnel - Free, no credit card, email only
+# 1. brew install cloudflared
+# 2. cloudflared tunnel login  (email only)
+# 3. cloudflared tunnel create preview
+# 4. Update tunnel: <TUNNEL_ID> below and credentials file path
+# 5. cloudflared tunnel route dns preview preview.yourdomain.duckdns.org (free domain)
+# 6. cloudflared tunnel run preview --config cloudflared-config.yml
+
+tunnel: <TUNNEL_ID>
+credentials-file: /Users/ulavayyak/.cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  # Preview API + proxy (path-based /preview/<sessionId>/)
+  - hostname: preview.yourdomain.duckdns.org
+    service: http://localhost:80
+  # Fallback
+  - service: http_status:404

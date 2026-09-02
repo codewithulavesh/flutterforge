@@ -41,11 +41,11 @@ const STEPS = [
 
 export function HowItWorks() {
   return (
-    <section id="how-it-works" className="py-24 bg-[var(--ff-surface)]/30">
+    <section id="how-it-works" className="py-12 sm:py-24 bg-[var(--ff-surface)]/30">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-2xl mx-auto mb-16">
-          <h2 className="text-4xl font-bold text-white mb-4">From idea to app in minutes</h2>
-          <p className="text-lg text-[var(--ff-text-muted)]">
+        <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-16">
+          <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-4">From idea to app in minutes</h2>
+          <p className="text-base sm:text-lg text-[var(--ff-text-muted)]">
             Six steps. No setup. No Flutter installation. Just describe and build.
           </p>
         </div>
@@ -54,7 +54,7 @@ export function HowItWorks() {
           {STEPS.map((step) => {
             const Icon = step.icon;
             return (
-              <div key={step.step} className="relative ff-card p-6 group hover:border-[var(--ff-border-hover)] transition-all">
+              <div key={step.step} className="relative ff-card p-4 sm:p-6 group hover:border-[var(--ff-border-hover)] transition-all">
                 <div className="absolute top-4 right-4 text-5xl font-bold text-[var(--ff-border)] group-hover:text-[var(--ff-primary)]/20 transition-colors">
                   {step.step}
                 </div>

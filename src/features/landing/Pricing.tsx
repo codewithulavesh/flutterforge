@@ -6,11 +6,11 @@ import { cn } from '@/utils/cn';
 
 export function Pricing() {
   return (
-    <section id="pricing" className="py-24">
+    <section id="pricing" className="py-12 sm:py-24">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-2xl mx-auto mb-16">
-          <h2 className="text-4xl font-bold text-white mb-4">Simple, transparent pricing</h2>
-          <p className="text-lg text-[var(--ff-text-muted)]">
+        <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-8 sm:mb-16">
+          <h2 className="text-2xl sm:text-3xl lg:text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-4">Simple, transparent pricing</h2>
+          <p className="text-base sm:text-base sm:text-lg text-[var(--ff-text-muted)]">
             Start free. Upgrade when you need more power. Cancel anytime.
           </p>
         </div>
@@ -20,7 +20,7 @@ export function Pricing() {
             <div
               key={plan.name}
               className={cn(
-                'ff-card p-8 relative',
+                'ff-card p-6 sm:p-8 relative',
                 plan.highlight && 'border-[var(--ff-primary)] ff-glow'
               )}
             >
@@ -35,7 +35,7 @@ export function Pricing() {
               <p className="text-sm text-[var(--ff-text-muted)] mb-4">{plan.description}</p>
 
               <div className="flex items-baseline gap-1 mb-6">
-                <span className="text-4xl font-bold text-white">{plan.price}</span>
+                <span className="text-2xl sm:text-3xl lg:text-2xl sm:text-3xl lg:text-4xl font-bold text-white">{plan.price}</span>
                 <span className="text-sm text-[var(--ff-text-dim)]">{plan.period}</span>
               </div>
 

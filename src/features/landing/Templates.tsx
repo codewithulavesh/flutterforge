@@ -5,16 +5,16 @@ import { TEMPLATES } from '@/utils/constants';
 
 export function Templates() {
   return (
-    <section id="templates" className="py-24">
+    <section id="templates" className="py-12 sm:py-24">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-2xl mx-auto mb-16">
-          <h2 className="text-4xl font-bold text-white mb-4">Start from a template</h2>
-          <p className="text-lg text-[var(--ff-text-muted)]">
+        <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-8 sm:mb-16">
+          <h2 className="text-2xl sm:text-3xl lg:text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-3 sm:mb-4">Start from a template</h2>
+          <p className="text-base sm:text-base sm:text-lg text-[var(--ff-text-muted)] px-2">
             Choose from pre-built templates or start from scratch. Every template is a real Flutter project.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           {TEMPLATES.map((template) => {
             const Icon = (Icons as unknown as Record<string, LucideIcon>)[template.icon] ?? Icons.FileCode2;
             return (

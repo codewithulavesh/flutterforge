@@ -1,0 +1,19 @@
+{
+  "name": "preview-api",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "dockerode": "^4.0.2",
+    "bullmq": "^5.11.0",
+    "ioredis": "^5.4.1",
+    "http-proxy": "^1.18.1",
+    "ws": "^8.17.1",
+    "tar": "^7.4.2"
+  }
+}
