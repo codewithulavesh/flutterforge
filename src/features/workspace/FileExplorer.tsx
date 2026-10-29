@@ -1,5 +1,4 @@
-import { useState, useMemo } from 'react';
-import * as Icons from 'lucide-react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { ChevronRight, ChevronDown, FileCode2, FileText, Settings, Braces, File, Folder, FolderOpen, Plus, Search } from 'lucide-react';
 import { useProjectStore } from '@/stores/project.store';
 import { useWorkspaceStore } from '@/stores/workspace.store';
@@ -23,6 +22,13 @@ export function FileExplorer() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['lib', 'lib/screens', 'lib/core', 'lib/core/theme', 'lib/core/router']));
   const [search, setSearch] = useState('');
   const [contextMenu, setContextMenu] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const focusSearch = () => searchRef.current?.focus();
+    window.addEventListener('ff:focus-file-search', focusSearch);
+    return () => window.removeEventListener('ff:focus-file-search', focusSearch);
+  }, []);
 
   const tree = useMemo(() => buildFileTree(files), [files]);
 
@@ -44,15 +50,17 @@ export function FileExplorer() {
     if (!currentProject) return;
     const name = prompt('File path (e.g. lib/screens/profile/profile_screen.dart):');
     if (!name) return;
-    await createFile(currentProject.id, name, '');
-    toast('success', `Created ${name}`);
+    const persisted = await createFile(currentProject.id, name, '');
+    if (persisted) toast('success', `Created ${name}`);
+    else toast('warning', `Created ${name} locally — it may not persist after a reload.`);
   }
 
   async function handleDelete(path: string) {
     if (!currentProject) return;
     if (!confirm(`Delete ${path}?`)) return;
-    await deleteFile(currentProject.id, path);
-    toast('success', `Deleted ${path}`);
+    const removed = await deleteFile(currentProject.id, path);
+    if (removed) toast('success', `Deleted ${path}`);
+    else toast('error', useProjectStore.getState().error ?? `Could not delete ${path}.`);
   }
 
   function renderNode(node: TreeNode, depth: number): React.ReactNode {
@@ -85,7 +93,7 @@ export function FileExplorer() {
       >
         <span className="w-3" />
         {getFileIcon(node.path)}
-        <span className={cn('truncate', isActive ? 'text-[var(--ff-primary)]' : 'text-[var(--ff-text-muted)] group-hover:text-white')}>
+        <span className={cn('truncate', isActive ? 'text-[var(--ff-primary)]' : 'text-[var(--ff-text-muted)] group-hover:text-[var(--ff-text)]')}>
           {node.name}
         </span>
         {contextMenu === node.path && (
@@ -108,7 +116,7 @@ export function FileExplorer() {
         <span className="text-xs font-semibold text-[var(--ff-text-muted)] uppercase tracking-wider">Files</span>
         <button
           onClick={handleNewFile}
-          className="p-1 rounded text-[var(--ff-text-dim)] hover:text-white hover:bg-[var(--ff-surface-2)] transition-colors"
+          className="p-1 rounded text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)] transition-colors"
         >
           <Plus size={14} />
         </button>
@@ -118,6 +126,7 @@ export function FileExplorer() {
         <div className="relative">
           <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--ff-text-dim)]" />
           <input
+            ref={searchRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search files..."
@@ -135,7 +144,7 @@ export function FileExplorer() {
                 onClick={() => openFile(f.path)}
                 className={cn(
                   'flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-xs',
-                  activeFile === f.path ? 'bg-[var(--ff-primary)]/10 text-[var(--ff-primary)]' : 'text-[var(--ff-text-muted)] hover:bg-[var(--ff-surface-2)] hover:text-white'
+                  activeFile === f.path ? 'bg-[var(--ff-primary)]/10 text-[var(--ff-primary)]' : 'text-[var(--ff-text-muted)] hover:bg-[var(--ff-surface-2)] hover:text-[var(--ff-text)]'
                 )}
               >
                 {getFileIcon(f.path)}

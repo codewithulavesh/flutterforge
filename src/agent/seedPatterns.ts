@@ -44,6 +44,12 @@ export async function seedCodePatterns(): Promise<void> {
   console.log(`Successfully seeded ${count}/${BUILTIN_CODE_PATTERNS.length} patterns into Supabase pgvector.`);
 }
 
-if (typeof require !== 'undefined' && require.main === module) {
+// ESM-safe direct-invocation check (`require.main` is always falsy under
+// tsx/ESM, which made the documented `npx tsx src/agent/seedPatterns.ts`
+// command silently do nothing).
+const invokedDirectly =
+  typeof process !== 'undefined' &&
+  !!process.argv[1]?.replace(/\\/g, '/').endsWith('src/agent/seedPatterns.ts');
+if (invokedDirectly) {
   void seedCodePatterns();
 }

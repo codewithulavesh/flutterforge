@@ -12,10 +12,10 @@ interface BadgeProps {
 export function Badge({ variant = 'default', children, className }: BadgeProps) {
   const variants: Record<BadgeVariant, string> = {
     default: 'bg-[var(--ff-surface-2)] text-[var(--ff-text-muted)] border-[var(--ff-border)]',
-    success: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-    warning: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-    error: 'bg-red-500/10 text-red-400 border-red-500/20',
-    info: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+    success: 'bg-emerald-500/10 text-emerald-700 border-emerald-500/25',
+    warning: 'bg-amber-500/10 text-amber-700 border-amber-500/25',
+    error: 'bg-red-500/10 text-red-600 border-red-500/25',
+    info: 'bg-[#0381A8]/10 text-[#0381A8] border-[#0381A8]/25',
   };
 
   return (

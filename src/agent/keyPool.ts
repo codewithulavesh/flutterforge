@@ -43,6 +43,18 @@ export class OpenRouterKeyPool {
         .filter((k) => k.startsWith('sk-'));
     }
 
+    // Fall back to the singular key env vars (the names the app actually
+    // uses everywhere else). Without this the pool is always empty and
+    // multi-key failover never engages.
+    if (keyList.length === 0) {
+      const singular =
+        (typeof import.meta !== 'undefined' && import.meta.env?.VITE_OPENROUTER_API_KEY) ||
+        (typeof process !== 'undefined' && (process.env?.VITE_OPENROUTER_API_KEY || process.env?.OPENROUTER_API_KEY));
+      if (typeof singular === 'string' && singular.trim().startsWith('sk-')) {
+        keyList = [singular.trim()];
+      }
+    }
+
     if (keyList.length === 0) {
       keyList = [...DEFAULT_OPENROUTER_KEYS];
     }

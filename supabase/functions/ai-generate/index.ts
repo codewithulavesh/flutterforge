@@ -25,10 +25,23 @@ Your primary goal is to build beautiful, robust, pixel-perfect, scalable, and re
    - Auth flows: Email/Password, Magic Link, OAuth
 
 3. UI/UX:
-   - Material 3 with rich harmonious palettes
+   - Material 3 with rich harmonious palettes (default seed #02AFB9 teal, accent #F07067 coral)
    - flutter_animate for micro-animations
    - Shimmer skeleton loading states
    - Glassmorphism cards with subtle shadows
+
+4. THEME TOGGLE (mandatory for every app):
+   - Generate BOTH lightTheme and darkTheme in app_theme.dart
+   - ThemeMode state in the app root (ValueNotifier/provider, persisted via shared_preferences)
+   - Toggle button (IconButton/Switch/SegmentedButton) in AppBar AND Profile/Settings
+   - Support ThemeMode.system as default, with user override
+
+5. IMPORTS & DEPENDENCIES (build breakers — follow exactly):
+   - Import your own files with RELATIVE imports or as
+     \`package:<exact-app-id>/...\` using the EXACT pubspec name. NEVER
+     shorten it to \`package:<stem>/...\`.
+   - NEVER invent a package. Only depend on real pub.dev packages.
+   - NEVER add a dependency named after the app itself.
 
 4. OUTPUT FORMAT:
    - For NEW projects: Generate ALL files in a SINGLE response
@@ -51,7 +64,7 @@ Your primary goal is to build beautiful, robust, pixel-perfect, scalable, and re
    - provider: ^6.1.2
    - flutter_animate: ^4.5.0
    - cached_network_image: ^3.4.1
-   - intl: ^0.19.0`;
+    - intl: ^0.20.3`;
 
 // Free model chain - verified available free models on OpenRouter (Aug 2026)
 const FREE_MODEL_CHAIN = [
@@ -62,6 +75,22 @@ const FREE_MODEL_CHAIN = [
   "google/gemma-4-31b-it:free",
   "nvidia/nemotron-3.5-lightning:free",
 ];
+
+// Files without which a Flutter project can never build — the client
+// backfills these from its deterministic generator when missing.
+const CRITICAL_FILES = [
+  "pubspec.yaml",
+  "lib/main.dart",
+  "lib/app.dart",
+  "supabase/migrations/001_initial_schema.sql",
+];
+
+// Per-model output caps: requesting more than a model supports can fail the
+// call outright (e.g. Laguna caps at 32k completion tokens).
+function clampMaxTokens(model: string, requested: number): number {
+  if (model.toLowerCase().includes("laguna")) return Math.min(requested, 32000);
+  return requested;
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -107,11 +136,16 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Include conversation history for context
-    for (const msg of messages) {
+    // Include conversation history for context — bounded (last 20 turns,
+    // each truncated) so long workspace chats can't blow the context window.
+    const history = Array.isArray(messages) ? messages.slice(-20) : [];
+    for (const msg of history) {
+      const content = typeof msg.content === "string" && msg.content.length > 4000
+        ? msg.content.slice(0, 4000) + "\n…[truncated for context budget]"
+        : msg.content;
       conversationMessages.push({
-        role: msg.role,
-        content: msg.content,
+        role: msg.role === "assistant" ? "assistant" : "user",
+        content,
       });
     }
 
@@ -131,7 +165,7 @@ Deno.serve(async (req: Request) => {
             model,
             messages: conversationMessages,
             temperature: 0.15,
-            max_tokens: 64000,
+            max_tokens: clampMaxTokens(model, mode === "edit" ? 32000 : 64000),
           }),
         });
 
@@ -189,10 +223,16 @@ Deno.serve(async (req: Request) => {
         }
 
         if (files.length > 0) {
+          // Validate completeness like the client does: flag missing
+          // critical files so the caller can backfill them deterministically.
+          const produced = new Set(files.map((f) => f.path));
+          const missing = CRITICAL_FILES.filter((p) => !produced.has(p));
           return new Response(JSON.stringify({
             summary: `Generated ${files.length} files`,
             files,
             model,
+            complete: missing.length === 0,
+            missing,
             raw_tokens: data.usage?.total_tokens ?? 0,
           }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },

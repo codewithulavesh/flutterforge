@@ -32,12 +32,12 @@ export function ForgotPasswordForm() {
   return (
     <AuthLayout>
       <div className="ff-fade-in">
-        <Link to="/login" className="flex items-center gap-1.5 text-sm text-[var(--ff-text-muted)] hover:text-white mb-6 transition-colors">
+        <Link to="/login" className="flex items-center gap-1.5 text-sm text-[var(--ff-text-muted)] hover:text-[var(--ff-text)] mb-6 transition-colors">
           <ArrowLeft size={16} />
           Back to sign in
         </Link>
 
-        <h1 className="text-2xl font-bold text-white mb-2">Reset password</h1>
+        <h1 className="text-2xl font-bold text-[var(--ff-text)] mb-2">Reset password</h1>
         <p className="text-[var(--ff-text-muted)] mb-8">
           Enter your email and we'll send you a reset link.
         </p>

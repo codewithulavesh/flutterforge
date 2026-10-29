@@ -4,6 +4,7 @@ import {
   SINGLE_PASS_GENERATION_PROMPT,
   INCREMENTAL_EDIT_PROMPT,
   VALIDATION_AND_HEALING_PROMPT,
+  NO_BACKEND_RULES,
 } from './prompts';
 import { MultiFileCodeGenerator } from './codeGenerator';
 import { keyPool } from './keyPool';
@@ -24,6 +25,52 @@ export interface OpenRouterConfig {
   siteName?: string;
 }
 
+// Per-model output caps (tokens). The chain mixes models with very different
+// completion limits (e.g. Laguna caps at 32k) — requesting more can fail the
+// call outright, so every request is clamped to the active model's cap.
+const MODEL_OUTPUT_CAPS: Array<{ match: string; maxTokens: number }> = [
+  { match: 'laguna', maxTokens: 32000 },
+];
+
+export function clampMaxTokens(model: string, requested: number): number {
+  const lower = model.toLowerCase();
+  for (const cap of MODEL_OUTPUT_CAPS) {
+    if (lower.includes(cap.match)) return Math.min(requested, cap.maxTokens);
+  }
+  return requested;
+}
+
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+/**
+ * Token-budgeted conversation history: most-recent turns first, oldest
+ * dropped when over budget, each message truncated. Replaces unbounded
+ * slice(-N) so long workspace chats can't blow the context window.
+ */
+export function budgetHistory<T extends { role: string; content: string }>(
+  history: T[],
+  opts: { maxTurns?: number; maxTokens?: number; maxCharsPerMessage?: number } = {},
+): T[] {
+  const { maxTurns = 6, maxTokens = 6000, maxCharsPerMessage = 4000 } = opts;
+  const recent = history
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .slice(-maxTurns)
+    .map((m) =>
+      m.content.length > maxCharsPerMessage
+        ? { ...m, content: `${m.content.slice(0, maxCharsPerMessage)}\n…[truncated for context budget]` }
+        : m,
+    );
+  let total = recent.reduce((sum, m) => sum + estimateTokens(m.content), 0);
+  let start = 0;
+  while (start < recent.length && total > maxTokens) {
+    total -= estimateTokens(recent[start].content);
+    start++;
+  }
+  return recent.slice(start);
+}
+
 // Free model fallback chain - verified available free models on OpenRouter (Aug 2026)
 const FREE_MODEL_CHAIN = [
   'nvidia/nemotron-3-ultra-550b-a55b:free',
@@ -37,6 +84,7 @@ const FREE_MODEL_CHAIN = [
 export class OpenRouterClient {
   private explicitApiKey?: string;
   private model: string;
+  private defaultTemperature = 0.15;
   private baseUrl = 'https://openrouter.ai/api/v1';
   private modelChainIndex = 0;
 
@@ -45,6 +93,13 @@ export class OpenRouterClient {
       this.explicitApiKey = config.apiKey;
     }
     this.model = config?.model || FREE_MODEL_CHAIN[0];
+    // Anchor the rotation index to the starting model so retries advance
+    // through the chain instead of restarting or skipping entries.
+    const startIdx = FREE_MODEL_CHAIN.indexOf(this.model);
+    this.modelChainIndex = startIdx >= 0 ? startIdx : 0;
+    if (config?.temperature !== undefined) {
+      this.defaultTemperature = config.temperature;
+    }
   }
 
   public setApiKey(key: string) {
@@ -62,7 +117,8 @@ export class OpenRouterClient {
   }
 
   public resetModelChain() {
-    this.modelChainIndex = 0;
+    const startIdx = FREE_MODEL_CHAIN.indexOf(this.model);
+    this.modelChainIndex = startIdx >= 0 ? startIdx : 0;
   }
 
   /**
@@ -76,15 +132,27 @@ export class OpenRouterClient {
     let lastError: Error | null = null;
     let currentModel = this.model;
 
+    // The old implementation set a 120s AbortController timeout but cleared it
+    // the moment response *headers* arrived — `response.json()` then waited for
+    // the body with no deadline at all. A slow (or hung) large completion
+    // stalled generation forever with no retry. We now stream the completion
+    // and enforce two real deadlines per attempt:
+    //   • idle — no SSE delta for 60s (covers "never starts producing" too)
+    //   • hard — 8 min cap even if the provider keeps trickling bytes
+    const IDLE_TIMEOUT_MS = 60000;
+    const HARD_TIMEOUT_MS = 480000;
+
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const activeKey = this.explicitApiKey || keyPool.getNextKey();
+      let timedOut = false;
 
       try {
         const payload: Record<string, unknown> = {
           model: currentModel,
           messages,
-          temperature: options?.temperature ?? 0.15,
-          max_tokens: options?.maxTokens ?? 64000,
+          temperature: options?.temperature ?? this.defaultTemperature,
+          max_tokens: clampMaxTokens(currentModel, options?.maxTokens ?? 64000),
+          stream: true,
         };
 
         if (options?.responseFormat) {
@@ -92,7 +160,16 @@ export class OpenRouterClient {
         }
 
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 120000);
+        let idleTimer: ReturnType<typeof setTimeout> | null = setTimeout(
+          () => controller.abort(),
+          IDLE_TIMEOUT_MS,
+        );
+        const hardTimer = setTimeout(() => controller.abort(), HARD_TIMEOUT_MS);
+        const bumpIdle = () => {
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS);
+        };
+        controller.signal.addEventListener('abort', () => { timedOut = true; });
 
         const response = await fetch(`${this.baseUrl}/chat/completions`, {
           method: 'POST',
@@ -105,9 +182,10 @@ export class OpenRouterClient {
           body: JSON.stringify(payload),
           signal: controller.signal,
         });
-        clearTimeout(timeoutId);
 
         if (!response.ok) {
+          clearTimeout(idleTimer);
+          clearTimeout(hardTimer);
           const errorText = await response.text();
           let errorDetail = errorText;
           try {
@@ -115,7 +193,10 @@ export class OpenRouterClient {
             errorDetail = errorJson.error?.message || errorText;
           } catch { /* use raw */ }
 
-          const isRetryable = [429, 402, 401, 404].includes(response.status);
+          const isRetryable = response.status === 429 || response.status === 402 || response.status >= 500;
+          // NOTE: 401 (bad key) and 404 (unknown model) fail fast on purpose —
+          // rotating models with the same credentials can never succeed and
+          // only burns minutes of timeout budget (see orchestrator heal loop).
           keyPool.markFailure(activeKey, `HTTP ${response.status}: ${errorDetail}`, isRetryable);
 
           if (isRetryable && attempt < maxRetries - 1) {
@@ -126,19 +207,66 @@ export class OpenRouterClient {
           throw new Error(`OpenRouter API error (${response.status}): ${errorDetail}`);
         }
 
-        const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-        const content = data.choices?.[0]?.message?.content;
+        if (!response.body) {
+          keyPool.markFailure(activeKey, 'No response stream from API', false);
+          throw new Error('OpenRouter returned no response stream.');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let content = '';
+
+        const consumeFrame = (frame: string) => {
+          const data = frame
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).trimStart())
+            .join('\n');
+          if (!data || data === '[DONE]') return;
+
+          let ssePayload: { choices?: Array<{ delta?: { content?: string | null } }> };
+          try {
+            ssePayload = JSON.parse(data) as typeof ssePayload;
+          } catch {
+            return;
+          }
+          const token = ssePayload.choices?.[0]?.delta?.content;
+          if (typeof token !== 'string' || !token) return;
+          content += token;
+          bumpIdle();
+        };
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const frames = buffer.split(/\r?\n\r?\n/);
+            buffer = frames.pop() ?? '';
+            frames.forEach(consumeFrame);
+          }
+          buffer += decoder.decode();
+          if (buffer.trim()) consumeFrame(buffer);
+        } finally {
+          clearTimeout(idleTimer);
+          clearTimeout(hardTimer);
+          reader.releaseLock();
+        }
+
         if (!content) {
           keyPool.markFailure(activeKey, 'Empty response from API', false);
-          throw new Error('Empty response from OpenRouter API.');
+          throw new Error(timedOut
+            ? `OpenRouter stalled (no data for ${Math.round(IDLE_TIMEOUT_MS / 1000)}s) on ${currentModel}.`
+            : 'Empty response from OpenRouter API.');
         }
 
         keyPool.markSuccess(activeKey);
         return content;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        if ((lastError as Error).name === 'AbortError') {
-          lastError = new Error(`OpenRouter timeout (120s) on ${currentModel}`);
+        if (lastError.name === 'AbortError' || timedOut) {
+          lastError = new Error(`OpenRouter stream stalled or timed out on ${currentModel} — retrying with the next key/model.`);
         }
         if (attempt < maxRetries - 1) {
           currentModel = this.getNextModel();
@@ -150,10 +278,104 @@ export class OpenRouterClient {
     throw lastError || new Error('All OpenRouter models and keys failed.');
   }
 
+  public async chatStream(
+    messages: LLMMessage[],
+    options?: {
+      temperature?: number;
+      maxTokens?: number;
+      signal?: AbortSignal;
+      onToken?: (token: string) => void;
+    },
+  ): Promise<string> {
+    const activeKey = this.explicitApiKey || keyPool.getNextKey();
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${activeKey}`,
+        'HTTP-Referer': 'https://flutterforge.dev',
+        'X-Title': 'FlutterForge AI Agent',
+      },
+      body: JSON.stringify({
+        model: this.model,
+        messages,
+        temperature: options?.temperature ?? this.defaultTemperature,
+        max_tokens: clampMaxTokens(this.model, options?.maxTokens ?? 64000),
+        stream: true,
+      }),
+      signal: options?.signal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let detail = errorText;
+      try {
+        const errorJson = JSON.parse(errorText) as { error?: { message?: string } };
+        detail = errorJson.error?.message || errorText;
+      } catch {
+        // Keep the raw response when the provider returns non-JSON errors.
+      }
+      keyPool.markFailure(activeKey, `HTTP ${response.status}: ${detail}`, response.status === 429 || response.status === 402 || response.status >= 500);
+      throw new Error(`OpenRouter API error (${response.status}): ${detail}`);
+    }
+
+    if (!response.body) throw new Error('OpenRouter returned no response stream.');
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result = '';
+
+    const consumeFrame = (frame: string) => {
+      const data = frame
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trimStart())
+        .join('\n');
+      if (!data || data === '[DONE]') return;
+
+      let payload: { choices?: Array<{ delta?: { content?: string | null } }> };
+      try {
+        payload = JSON.parse(data) as typeof payload;
+      } catch {
+        return;
+      }
+      const token = payload.choices?.[0]?.delta?.content;
+      if (typeof token !== 'string' || !token) return;
+      result += token;
+      options?.onToken?.(token);
+    };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split(/\r?\n\r?\n/);
+        buffer = frames.pop() ?? '';
+        frames.forEach(consumeFrame);
+      }
+      buffer += decoder.decode();
+      if (buffer.trim()) consumeFrame(buffer);
+    } finally {
+      reader.releaseLock();
+    }
+
+    if (!result.trim()) throw new Error('The AI returned an empty reply — please try again.');
+    keyPool.markSuccess(activeKey);
+    return result.trim();
+  }
+
   /**
    * Performs live AI planning via OpenRouter LLM
    */
-  public async planLive(prompt: string, context: AgentContext, stateManagement: string, onProgress?: (msg: string) => void): Promise<AgentPlan> {
+  public async planLive(
+    prompt: string,
+    context: AgentContext,
+    stateManagement: string,
+    onProgress?: (msg: string) => void,
+    conversationHistory: Array<{ role: string; content: string }> = [],
+  ): Promise<AgentPlan> {
     onProgress?.(`Sending live planning request to OpenRouter (${this.model})...`);
 
     const planningPrompt = PLANNING_PROMPT_TEMPLATE
@@ -163,35 +385,91 @@ export class OpenRouterClient {
       .replace('{EXISTING_FILES_COUNT}', context.existingFiles.length.toString());
 
     const messages: LLMMessage[] = [
-      { role: 'system', content: FLUTTER_SUPABASE_SYSTEM_PROMPT },
-      { role: 'user', content: planningPrompt },
+      // Ask the model explicitly to return only JSON — many models respect this
+      // even without response_format, reducing parse failures.
+      {
+        role: 'system',
+        content: FLUTTER_SUPABASE_SYSTEM_PROMPT
+          + (context.usesSupabase === false ? NO_BACKEND_RULES : '')
+          + '\n\nIMPORTANT: Respond with ONLY a valid JSON object. No preamble, no explanation, no markdown fences, no <think> blocks.',
+      },
     ];
 
-    const rawResponse = await this.chat(messages, { temperature: 0.1 });
+    // Follow-up prompts replan in conversational context (was: ignored).
+    for (const msg of budgetHistory(conversationHistory, { maxTurns: 4, maxTokens: 2000 })) {
+      messages.push({ role: msg.role as 'user' | 'assistant', content: msg.content });
+    }
+    messages.push({ role: 'user', content: planningPrompt });
+
+    // Try with json_object response_format first (supported by many models);
+    // fall back to plain text if the API rejects it.
+    let rawResponse: string;
+    try {
+      rawResponse = await this.chat(messages, {
+        temperature: 0.1,
+        maxTokens: 8000,
+        responseFormat: { type: 'json_object' },
+      });
+    } catch {
+      rawResponse = await this.chat(messages, { temperature: 0.1, maxTokens: 8000 });
+    }
 
     try {
+      // Strip thinking/reasoning tags that some models (Nemotron, DeepSeek) prepend
       const cleaned = rawResponse
         .replace(/<thought>[\s\S]*?<\/thought>/gi, '')
         .replace(/<think>[\s\S]*?<\/think>/gi, '')
-        .replace(/```json/gi, '')
-        .replace(/```/g, '')
+        .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
+        .replace(/```json\s*/gi, '')
+        .replace(/```\s*/g, '')
         .trim();
 
-      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-      const jsonString = jsonMatch ? jsonMatch[0] : cleaned;
-      const parsed = JSON.parse(jsonString) as Partial<AgentPlan>;
+      // Strategy 1: the whole cleaned string is JSON
+      // Strategy 2: first {...} block
+      // Strategy 3: last {...} block (some models put JSON after prose)
+      let parsed: Partial<AgentPlan> | null = null;
+      const candidates: string[] = [];
+      if (cleaned.startsWith('{')) candidates.push(cleaned);
+      const allMatches = [...cleaned.matchAll(/\{[\s\S]*?\}/g)].map((m) => m[0]);
+      // Prefer longest match (most complete JSON object)
+      allMatches.sort((a, b) => b.length - a.length);
+      candidates.push(...allMatches);
+      // Also try the entire string even if it doesn't start with {
+      candidates.push(cleaned);
+
+      for (const candidate of candidates) {
+        try {
+          parsed = JSON.parse(candidate) as Partial<AgentPlan>;
+          if (parsed && typeof parsed === 'object') break;
+        } catch {
+          // try next candidate
+        }
+      }
+
+      if (!parsed) throw new Error('No valid JSON found in response');
+
+      const liveAppName = parsed.appName || context.projectName || 'FlutterForgeApp';
+      // Live plans skip the deterministic planner, so backfill the unique
+      // app identity here — otherwise every AI-planned app reuses one name.
+      const { generateUniqueAppId, getAndroidApplicationId, getIosBundleId } =
+        await import('../utils/appId');
+      const liveAppId =
+        parsed.appId || generateUniqueAppId(liveAppName, context.projectId || undefined);
 
       return {
         id: crypto.randomUUID(),
-        appName: parsed.appName || context.projectName || 'FlutterForgeApp',
+        appName: liveAppName,
+        appId: liveAppId,
+        applicationId: parsed.applicationId || getAndroidApplicationId(liveAppId),
+        bundleId: parsed.bundleId || getIosBundleId(liveAppId),
         appDescription: parsed.appDescription || `Production-grade app for ${prompt}`,
         architecture: 'feature_first',
         stateManagement: (stateManagement || 'provider') as AgentPlan['stateManagement'],
         domain: parsed.domain || 'general',
         theme: parsed.theme || {
-          primaryColor: '#3B82F6',
-          secondaryColor: '#8B5CF6',
-          backgroundColor: '#FFFFFF',
+          primaryColor: '#02AFB9',
+          secondaryColor: '#F07067',
+          backgroundColor: '#FBFADD',
           isDarkPreferred: false,
         },
         dependencies: parsed.dependencies || {
@@ -217,8 +495,8 @@ export class OpenRouterClient {
         estimatedSteps: 10,
       };
     } catch {
-      onProgress?.('Falling back to structured planner.');
-      throw new Error('Failed to parse OpenRouter plan JSON response.');
+      // Silently fall back — the caller handles this with the structured planner
+      throw new Error('plan_parse_failed');
     }
   }
 
@@ -231,7 +509,8 @@ export class OpenRouterClient {
     contextSummary: string,
     patterns: CodePattern[],
     conversationHistory: Array<{ role: string; content: string }> = [],
-    onProgress?: (msg: string) => void
+    onProgress?: (msg: string) => void,
+    usesSupabase = true,
   ): Promise<AgentFileArtifact[]> {
     const domain = plan.domain || 'general';
 
@@ -246,16 +525,21 @@ export class OpenRouterClient {
       'lib/app.dart',
       'lib/core/constants/app_constants.dart',
       'lib/core/theme/app_theme.dart',
+      'lib/core/theme/theme_controller.dart',
+      'lib/core/widgets/theme_toggle_button.dart',
       'lib/core/router/app_router.dart',
       ...plan.screens.map((s) => s.filePath),
       ...plan.models.map((m) => m.filePath),
       ...plan.services.map((s) => s.filePath),
-      'supabase/migrations/001_initial_schema.sql',
+      ...(usesSupabase ? ['supabase/migrations/001_initial_schema.sql'] : []),
     ];
 
     const generationPrompt = SINGLE_PASS_GENERATION_PROMPT
       .replace('{PLAN_JSON}', JSON.stringify({
         appName: plan.appName,
+        appId: (plan as Partial<AgentPlan>).appId,
+        applicationId: (plan as Partial<AgentPlan>).applicationId,
+        bundleId: (plan as Partial<AgentPlan>).bundleId,
         domain: plan.domain,
         theme: plan.theme,
         screens: plan.screens.map((s) => ({ name: s.name, filePath: s.filePath, description: s.description, widgets: s.widgets, stateNeeds: s.stateNeeds })),
@@ -271,12 +555,11 @@ export class OpenRouterClient {
       .replace('{STATE_MANAGEMENT}', plan.stateManagement || 'provider');
 
     const messages: LLMMessage[] = [
-      { role: 'system', content: FLUTTER_SUPABASE_SYSTEM_PROMPT },
+      { role: 'system', content: FLUTTER_SUPABASE_SYSTEM_PROMPT + (usesSupabase ? '' : NO_BACKEND_RULES) },
     ];
 
-    // Include last few conversation turns for context
-    const recentHistory = conversationHistory.slice(-6);
-    for (const msg of recentHistory) {
+    // Token-budgeted recent history (was: unbounded slice(-6)).
+    for (const msg of budgetHistory(conversationHistory, { maxTurns: 6, maxTokens: 6000 })) {
       messages.push({ role: msg.role as 'user' | 'assistant', content: msg.content });
     }
 
@@ -308,7 +591,8 @@ export class OpenRouterClient {
     prompt: string,
     existingFiles: Array<{ path: string; content: string }>,
     conversationHistory: Array<{ role: string; content: string }>,
-    onProgress?: (msg: string) => void
+    onProgress?: (msg: string) => void,
+    usesSupabase = true,
   ): Promise<AgentFileArtifact[]> {
     onProgress?.('Generating incremental changes...');
 
@@ -319,17 +603,16 @@ export class OpenRouterClient {
       .replace('{USER_PROMPT}', prompt);
 
     const messages: LLMMessage[] = [
-      { role: 'system', content: FLUTTER_SUPABASE_SYSTEM_PROMPT },
+      { role: 'system', content: FLUTTER_SUPABASE_SYSTEM_PROMPT + (usesSupabase ? '' : NO_BACKEND_RULES) },
     ];
 
-    const recentHistory = conversationHistory.slice(-8);
-    for (const msg of recentHistory) {
+    for (const msg of budgetHistory(conversationHistory, { maxTurns: 8, maxTokens: 4000 })) {
       messages.push({ role: msg.role as 'user' | 'assistant', content: msg.content });
     }
 
     messages.push({ role: 'user', content: editPrompt });
 
-    const rawResponse = await this.chat(messages, { temperature: 0.15, maxTokens: 64000 });
+    const rawResponse = await this.chat(messages, { temperature: 0.15, maxTokens: 32000 });
 
     return MultiFileCodeGenerator.parseLLMCodeArtifacts(rawResponse);
   }
@@ -354,7 +637,7 @@ export class OpenRouterClient {
       const rawResponse = await this.chat([
         { role: 'system', content: FLUTTER_SUPABASE_SYSTEM_PROMPT },
         { role: 'user', content: healingPrompt },
-      ], { temperature: 0.1, maxTokens: 32000 });
+      ], { temperature: 0.1, maxTokens: 16000 });
 
       const files = MultiFileCodeGenerator.parseLLMCodeArtifacts(rawResponse);
       const healed = files.find((f) => f.path === filePath);
@@ -374,7 +657,7 @@ export class OpenRouterClient {
     patterns: CodePattern[],
     onProgress?: (msg: string) => void
   ): Promise<AgentFileArtifact[]> {
-    return this.generateCodeSinglePass(prompt, plan, contextSummary, patterns, [], onProgress);
+    return this.generateCodeSinglePass(prompt, plan, contextSummary, patterns, [], onProgress, true);
   }
 
   /**
@@ -388,6 +671,6 @@ export class OpenRouterClient {
   ): Promise<AgentFileArtifact[]> {
     const domain = plan.domain || 'general';
     const patterns = await VectorStore.retrievePatterns(prompt, domain, undefined, 4);
-    return this.generateCodeSinglePass(prompt, plan, contextSummary, patterns, [], onProgress);
+    return this.generateCodeSinglePass(prompt, plan, contextSummary, patterns, [], onProgress, true);
   }
 }

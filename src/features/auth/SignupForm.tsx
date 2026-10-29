@@ -43,7 +43,7 @@ export function SignupForm() {
   return (
     <AuthLayout>
       <div className="ff-fade-in">
-        <h1 className="text-2xl font-bold text-white mb-2">Create your account</h1>
+        <h1 className="text-2xl font-bold text-[var(--ff-text)] mb-2">Create your account</h1>
         <p className="text-[var(--ff-text-muted)] mb-8">Start building Flutter apps with AI</p>
 
         {(error || formError) && (
@@ -100,10 +100,6 @@ export function SignupForm() {
           <Link to="/login" className="text-[var(--ff-primary)] hover:underline font-medium">
             Sign in
           </Link>
-        </p>
-
-        <p className="mt-4 text-center text-xs text-[var(--ff-text-dim)]">
-          By signing up, you agree to our Terms of Service and Privacy Policy.
         </p>
       </div>
     </AuthLayout>

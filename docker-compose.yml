@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  # FlutterForge web UI + local DeepSeek Harness bridge (Node, no Python).
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: flutterforge
+    ports:
+      - "8787:8787"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8787
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DSH_BIN=${DSH_BIN:-}
+      - DSH_HOME=/data/dsh
+      - FLUTTERFORGE_WORKSPACES=/data/workspaces
+    volumes:
+      - flutterforge-data:/data
+      # Mount a Linux DeepSeek Harness runtime to enable the harness engine:
+      # - /path/to/deepseek-harness:/opt/dsh:ro
+      #   and set DSH_BIN=/opt/dsh/runtime/cli/bin/dsh
+    restart: unless-stopped
+
+volumes:
+  flutterforge-data:
+    name: flutterforge_data

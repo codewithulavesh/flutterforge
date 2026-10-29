@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Package, Plus, Trash2, Search, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Package, Plus, Trash2, Search, CheckCircle2 } from 'lucide-react';
 import { useProjectStore } from '@/stores/project.store';
 import { toast } from '@/components/ui/Toast';
 import { Badge } from '@/components/ui/Badge';
@@ -21,11 +21,14 @@ const POPULAR_PACKAGES = [
 ];
 
 export function DependenciesView() {
-  const { dependencies, currentProject, addDependency, removeDependency } = useProjectStore();
+  const { files, currentProject, saveFile } = useProjectStore();
   const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [newPackage, setNewPackage] = useState('');
   const [newVersion, setNewVersion] = useState('');
+
+  const pubspec = files.find((file) => file.path === 'pubspec.yaml');
+  const dependencies = useMemo(() => parsePubspecDependencies(pubspec?.content ?? ''), [pubspec?.content]);
 
   const filtered = POPULAR_PACKAGES.filter((p) =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -33,18 +36,37 @@ export function DependenciesView() {
   );
 
   async function handleAdd(name: string, version: string) {
-    if (!currentProject) return;
-    await addDependency(currentProject.id, name, version);
-    toast('success', `Added ${name} ${version}`);
+    if (!currentProject || !pubspec) {
+      toast('error', 'Generate the project first.');
+      return;
+    }
+    const cleanName = name.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    if (!cleanName) return;
+    if (parsePubspecDependencies(pubspec.content).some((dependency) => dependency.name === cleanName)) {
+      toast('info', `${cleanName} is already in pubspec.yaml`);
+      return;
+    }
+    const next = pubspec.content.replace(
+      /^dependencies:\s*$/m,
+      `dependencies:\n  ${cleanName}: ${version || '^1.0.0'}`,
+    );
+    const saved = await saveFile(currentProject.id, 'pubspec.yaml', next);
+    if (saved) toast('success', `Added ${cleanName} ${version}`);
+    else toast('warning', `Added ${cleanName} locally — changes may not persist.`);
     setAddOpen(false);
     setNewPackage('');
     setNewVersion('');
   }
 
-  async function handleRemove(id: string, name: string) {
-    if (!currentProject) return;
-    await removeDependency(currentProject.id, id);
-    toast('success', `Removed ${name}`);
+  async function handleRemove(name: string) {
+    if (!currentProject || !pubspec) return;
+    const next = pubspec.content
+      .split('\n')
+      .filter((line) => !new RegExp(`^\\s{2}${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:`).test(line))
+      .join('\n');
+    const saved = await saveFile(currentProject.id, 'pubspec.yaml', next);
+    if (saved) toast('success', `Removed ${name}`);
+    else toast('warning', `Removed ${name} locally — changes may not persist.`);
   }
 
   return (
@@ -53,7 +75,7 @@ export function DependenciesView() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Package size={18} className="text-[var(--ff-primary)]" />
-            <h2 className="text-lg font-semibold text-white">Dependencies</h2>
+            <h2 className="text-lg font-semibold text-[var(--ff-text)]">Dependencies</h2>
           </div>
           <Button size="sm" icon={<Plus size={14} />} onClick={() => setAddOpen(true)}>Add Package</Button>
         </div>
@@ -70,26 +92,25 @@ export function DependenciesView() {
           ) : (
             <div className="space-y-2">
               {dependencies.map((dep) => (
-                <div key={dep.id} className="ff-card p-3 flex items-center justify-between group">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-[var(--ff-primary)]/10 flex items-center justify-center">
+                <div key={dep.name} className="ff-card p-3 flex items-center justify-between gap-2 group">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-[var(--ff-primary)]/10 flex items-center justify-center shrink-0">
                       <Package size={16} className="text-[var(--ff-primary)]" />
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-white">{dep.package_name}</p>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-[var(--ff-text)] truncate">{dep.name}</p>
                       <p className="text-xs text-[var(--ff-text-dim)] font-mono">{dep.version}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={dep.status === 'installed' ? 'success' : dep.status === 'installing' ? 'warning' : 'error'}>
-                      {dep.status === 'installed' && <CheckCircle2 size={10} />}
-                      {dep.status === 'installing' && <Loader2 size={10} className="ff-spin" />}
-                      {dep.status === 'failed' && <AlertCircle size={10} />}
-                      {dep.status}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Badge variant="success">
+                      <CheckCircle2 size={10} />
+                      pubspec
                     </Badge>
                     <button
-                      onClick={() => handleRemove(dep.id, dep.package_name)}
-                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded text-red-400 hover:bg-red-500/10 transition-all"
+                      onClick={() => handleRemove(dep.name)}
+                      className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 p-1.5 rounded text-red-400 hover:bg-red-500/10 transition-all"
+                      title={`Remove ${dep.name}`}
                     >
                       <Trash2 size={14} />
                     </button>
@@ -116,12 +137,12 @@ export function DependenciesView() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {filtered.map((pkg) => {
-              const isInstalled = dependencies.some((d) => d.package_name === pkg.name);
+              const isInstalled = dependencies.some((d) => d.name === pkg.name);
               return (
                 <div key={pkg.name} className="ff-card p-3 flex items-center justify-between group">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-white">{pkg.name}</p>
+                      <p className="text-sm font-medium text-[var(--ff-text)]">{pkg.name}</p>
                       <span className="text-[10px] text-[var(--ff-text-dim)] font-mono">{pkg.version}</span>
                     </div>
                     <p className="text-xs text-[var(--ff-text-muted)] truncate">{pkg.description}</p>
@@ -153,4 +174,25 @@ export function DependenciesView() {
       </Modal>
     </div>
   );
+}
+
+
+/** Read the direct dependencies from a pubspec.yaml string. */
+function parsePubspecDependencies(content: string): Array<{ name: string; version: string }> {
+  const lines = String(content ?? '').split('\n');
+  const dependencies: Array<{ name: string; version: string }> = [];
+  let inDependencies = false;
+  for (const line of lines) {
+    if (/^dependencies:\s*$/.test(line)) {
+      inDependencies = true;
+      continue;
+    }
+    if (!inDependencies) continue;
+    if (/^\S/.test(line)) break;
+    const match = line.match(/^ {2}([a-z][a-z0-9_]*):\s*(.*)$/);
+    if (match && match[1] !== 'flutter') {
+      dependencies.push({ name: match[1], version: match[2] || 'any' });
+    }
+  }
+  return dependencies;
 }

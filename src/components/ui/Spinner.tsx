@@ -3,7 +3,7 @@ import { cn } from '@/utils/cn';
 export function Spinner({ className, size = 16 }: { className?: string; size?: number }) {
   return (
     <span
-      className="inline-block border-2 border-current border-t-transparent rounded-full ff-spin"
+      className={cn('inline-block border-2 border-current border-t-transparent rounded-full ff-spin', className)}
       style={{ width: size, height: size }}
       aria-label="Loading"
     />

@@ -1,5 +1,4 @@
 import { type ReactNode, useState, useRef, useEffect } from 'react';
-import { ChevronDown } from 'lucide-react';
 import { cn } from '@/utils/cn';
 
 interface DropdownProps {
@@ -29,7 +28,7 @@ export function Dropdown({ trigger, children, align = 'right', className }: Drop
       {open && (
         <div
           className={cn(
-            'absolute top-full mt-1 z-50 ff-card min-w-[180px] py-1 ff-fade-in',
+            'absolute top-full mt-1 z-50 ff-card min-w-[180px] max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto ff-scrollbar py-1 ff-fade-in',
             align === 'right' ? 'right-0' : 'left-0',
             className
           )}

@@ -7,13 +7,13 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "cors": "^2.8.5",
-    "dockerode": "^4.0.2",
     "bullmq": "^5.11.0",
-    "ioredis": "^5.4.1",
+    "cors": "^2.8.6",
+    "dockerode": "^4.0.2",
+    "express": "^4.22.3",
     "http-proxy": "^1.18.1",
-    "ws": "^8.17.1",
-    "tar": "^7.4.2"
+    "ioredis": "^5.4.1",
+    "tar": "^7.4.2",
+    "ws": "^8.21.3"
   }
 }

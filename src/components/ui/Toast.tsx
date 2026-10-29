@@ -47,7 +47,7 @@ export function ToastContainer() {
           )}
         >
           {icons[t.type]}
-          <p className="text-sm text-[var(--ff-text)] flex-1">{t.message}</p>
+          <p className="text-sm text-[var(--ff-text)] flex-1 min-w-0 break-words">{t.message}</p>
           <button
             onClick={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))}
             className="text-[var(--ff-text-dim)] hover:text-[var(--ff-text)]"

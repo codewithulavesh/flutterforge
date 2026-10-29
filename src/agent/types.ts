@@ -56,14 +56,6 @@ export interface RelevantFile {
   similarity: number;
 }
 
-export interface GenerationBatch {
-  id: string;
-  label: string;
-  filePaths: string[];
-  retrievedPatterns?: CodePattern[];
-  relevantProjectFiles?: string[];
-}
-
 export interface ColumnDefinition {
   name: string;
   type: 'uuid' | 'text' | 'varchar' | 'integer' | 'bigint' | 'boolean' | 'timestamp' | 'timestamptz' | 'jsonb' | 'numeric' | 'float';
@@ -137,6 +129,12 @@ export interface ModelPlan {
 export interface AgentPlan {
   id: string;
   appName: string;
+  /** Unique Dart package name (`name:` in pubspec.yaml). Always unique per project. */
+  appId: string;
+  /** Android applicationId derived from appId (com.flutterforge.<appId>). */
+  applicationId: string;
+  /** iOS bundle identifier derived from appId. */
+  bundleId: string;
   appDescription: string;
   architecture: 'clean_architecture' | 'feature_first' | 'modular';
   stateManagement: 'riverpod' | 'provider' | 'bloc' | 'change_notifier';
@@ -209,6 +207,16 @@ export interface AgentContext {
   projectDescription?: string;
   existingFiles: Array<{ path: string; content: string; isDirectory?: boolean; is_directory?: boolean }>;
   installedPackages?: Record<string, string>;
+  /** Target platform selected when the project was created (web, mobile, desktop, macos, windows). */
+  platform?: string;
+  /** Exact Dart package name the generated pubspec must use. */
+  appId?: string;
+  /** True only when the app genuinely needs accounts/shared data/realtime. */
+  usesSupabase?: boolean;
+  /** File the user is currently viewing (helps chat/edit focus). */
+  activeFile?: string | null;
+  /** Latest preview/build errors to repair. */
+  buildErrors?: string[];
   conversationHistory: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
   supabaseUrl?: string;
   supabaseAnonKey?: string;
@@ -224,6 +232,8 @@ export interface AgentGenerationOptions {
   onEvent?: AgentEventListener;
   isIncremental?: boolean;
   conversationHistory?: Array<{ role: string; content: string }>;
+  /** AbortSignal from the UI Stop button — cancels backend streams / LLM calls. */
+  signal?: AbortSignal;
 }
 
 export interface AgentGenerationResult {

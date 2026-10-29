@@ -7,20 +7,25 @@ import {
   RotateCw,
   Hammer,
   Download,
-  Rocket,
-  Sparkles,
-  ChevronDown,
+  MessageSquarePlus,
+  Copy,
+  RotateCcw,
+  FolderOpen,
   Command,
   Zap,
 } from 'lucide-react';
 import { useWorkspaceStore } from '@/stores/workspace.store';
 import { useProjectStore } from '@/stores/project.store';
 import { useTerminalStore } from '@/stores/terminal.store';
+import { usePreviewStore } from '@/stores/preview.store';
+import { BrandLogo } from '@/components/BrandLogo';
+import { HarnessClient } from '@/agent/harnessClient';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Dropdown, DropdownItem } from '@/components/ui/Dropdown';
 import { toast } from '@/components/ui/Toast';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { downloadProjectZip, formatBytes } from '@/utils/exportProject';
 import { SIDEBAR_SECTIONS } from '@/utils/constants';
 import { cn } from '@/utils/cn';
 
@@ -43,31 +48,75 @@ export function WorkspaceToolbar() {
   const dartFileCount = files.filter((f) => !f.is_directory && f.path.endsWith('.dart')).length;
   const hasCode = dartFileCount > 0;
 
+  async function handleExportZip() {
+    if (!currentProject) {
+      toast('error', 'No project open to export');
+      return;
+    }
+    toast('info', `Preparing ${currentProject.name} for download...`);
+    try {
+      const built = await downloadProjectZip(currentProject, files);
+      toast('success', `Downloaded ${built.filename} (${built.fileCount} files, ${formatBytes(built.bytes)})`);
+    } catch (err) {
+      toast('error', err instanceof Error ? `Export failed: ${err.message}` : 'Export failed');
+    }
+  }
+
+  async function openProjectFolder() {
+    if (!currentProject) return;
+    const workspace = await new HarnessClient().workspacePath(currentProject.id);
+    if (!workspace) {
+      toast('error', 'No generated workspace yet — build the app first.');
+      return;
+    }
+    const result = await window.flutterforgeDesktop?.openPath(workspace);
+    if (result && !result.ok) toast('error', result.error || 'Could not open the folder.');
+  }
+
+  function dispatchChat(action: string) {
+    setActiveView('ai-builder');
+    window.setTimeout(() => window.dispatchEvent(new CustomEvent(action)), 100);
+  }
+
   async function handleBuild() {
     if (!currentProject) return;
+    const previewStore = usePreviewStore.getState();
+    const existing = previewStore.getSession(currentProject.id);
+    if (existing && (existing.status === 'queued' || existing.status === 'building')) {
+      toast('info', 'A build is already running — watch it in the Preview tab.');
+      setActiveView('preview');
+      return;
+    }
+    if (files.length === 0 || dartFileCount === 0) {
+      toast('error', 'No Dart files to build yet — generate the app first.');
+      return;
+    }
+    // Trigger the REAL Flutter web build (same pipeline as PreviewPanel).
+    // Live compiler output streams into the Build panel via the session sync.
     setBuilding(true);
     setBottomPanelOpen(true);
     setBottomPanelTab('build');
     clearBuildLogs();
-    addBuildLog('$ flutter build web --release');
-    addBuildLog('Resolving dependencies...');
-    await new Promise((r) => setTimeout(r, 600));
-    addBuildLog('  + go_router 14.2.0 (from pubspec.yaml)');
-    addBuildLog('  + supabase_flutter 2.8.0 (from pubspec.yaml)');
-    await new Promise((r) => setTimeout(r, 800));
-    addBuildLog('Compiling lib/main.dart...');
-    await new Promise((r) => setTimeout(r, 700));
-    addBuildLog('Compiling lib/core/router/app_router.dart...');
-    addBuildLog('Compiling lib/core/theme/app_theme.dart...');
-    await new Promise((r) => setTimeout(r, 500));
-    addBuildLog('Generating JavaScript bundle...');
-    await new Promise((r) => setTimeout(r, 800));
-    addBuildLog('');
-    addBuildLog('✓ Built build/web');
-    addBuildLog(`✓ ${dartFileCount} Dart files compiled successfully`);
-    addBuildLog('Build completed in 3.8s');
-    setBuilding(false);
-    toast('success', 'Build complete! Switch to Preview to run your app.');
+    addBuildLog('Starting Flutter web preview build…');
+    try {
+      const sessionId = await previewStore.build(
+        currentProject.id,
+        files.filter((f) => !f.is_directory).map((f) => ({ path: f.path, content: f.content })),
+        {
+          supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+          supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+      );
+      addBuildLog(`✓ Build started (session ${sessionId.slice(0, 8)}…) — live log in Preview tab`);
+      setActiveView('preview');
+      toast('success', 'Real web build started — watch it in Preview.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Build failed to start.';
+      addBuildLog(`✗ ${message}`);
+      toast('error', message);
+    } finally {
+      setBuilding(false);
+    }
   }
 
   return (
@@ -80,10 +129,8 @@ export function WorkspaceToolbar() {
             onClick={() => navigate('/dashboard')}
             className="group flex items-center gap-2 text-sm hover:opacity-90 transition-opacity"
           >
-            <span className="flex items-center justify-center w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-400 shadow-md shadow-blue-500/30 shrink-0">
-              <Sparkles size={14} className="text-white" />
-            </span>
-            <span className="hidden sm:block max-w-28 truncate font-bold text-sm text-white group-hover:text-blue-200 transition-colors">
+            <BrandLogo size={28} className="border border-[var(--ff-border)] shadow-[3px_3px_0_var(--ff-studio-yellow)]" />
+            <span className="hidden sm:block max-w-28 truncate font-bold text-sm text-[var(--ff-text)] group-hover:text-[var(--ff-primary)] transition-colors">
               {currentProject?.name ?? 'FlutterForge'}
             </span>
           </button>
@@ -105,40 +152,41 @@ export function WorkspaceToolbar() {
         </div>
 
         {/* ── Center: primary nav ───────────────────────────── */}
-        <nav
-          className="flex items-center gap-0.5 flex-1 overflow-x-auto ff-scrollbar min-w-0 mx-1 sm:mx-2 order-last sm:order-none w-full sm:w-auto"
-          aria-label="Workspace navigation"
-          style={{ scrollbarWidth: 'none' }}
-        >
-          {WORKSPACE_NAV_ITEMS.filter((item) => PRIMARY_NAV_ITEMS.has(item.id)).map((item) => {
-            const Icon = (Icons as unknown as Record<string, LucideIcon>)[item.icon] ?? Icons.Circle;
-            const isActive = item.id === activeView;
-            return (
-              <button
-                key={item.id}
-                onClick={() => item.id === 'dashboard' ? navigate('/dashboard') : setActiveView(item.id as typeof activeView)}
-                className={cn(
-                  'relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap transition-all shrink-0',
-                  isActive
-                    ? 'bg-[var(--ff-primary)]/12 text-[var(--ff-primary)] shadow-sm'
-                    : 'text-[var(--ff-text-muted)] hover:text-white hover:bg-[var(--ff-surface-2)]'
-                )}
-                aria-current={isActive ? 'page' : undefined}
-              >
-                <Icon size={13} className="shrink-0" />
-                <span className="hidden sm:inline">{item.label}</span>
-                {/* Active underline */}
-                {isActive && (
-                  <span className="absolute bottom-0 inset-x-2 h-0.5 rounded-full bg-[var(--ff-primary)]" />
-                )}
-              </button>
-            );
-          })}
-        </nav>
+        <div className="flex items-center order-last w-full sm:order-none sm:w-auto sm:contents">
+          <nav
+            className="flex items-center gap-0.5 flex-1 overflow-x-auto ff-scrollbar min-w-0 mx-1 sm:mx-2"
+            aria-label="Workspace navigation"
+            style={{ scrollbarWidth: 'none' }}
+          >
+            {WORKSPACE_NAV_ITEMS.filter((item) => PRIMARY_NAV_ITEMS.has(item.id)).map((item) => {
+              const Icon = (Icons as unknown as Record<string, LucideIcon>)[item.icon] ?? Icons.Circle;
+              const isActive = item.id === activeView;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => item.id === 'dashboard' ? navigate('/dashboard') : setActiveView(item.id as typeof activeView)}
+                  className={cn(
+                    'relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap transition-all shrink-0',
+                    isActive
+                      ? 'bg-[var(--ff-primary)]/12 text-[var(--ff-primary)] shadow-sm'
+                      : 'text-[var(--ff-text-muted)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)]'
+                  )}
+                  aria-current={isActive ? 'page' : undefined}
+                >
+                  <Icon size={13} className="shrink-0" />
+                  <span className="hidden sm:inline">{item.label}</span>
+                  {/* Active underline */}
+                  {isActive && (
+                    <span className="absolute bottom-0 inset-x-2 h-0.5 rounded-full bg-[var(--ff-primary)]" />
+                  )}
+                </button>
+              );
+            })}
+          </nav>
 
-        {/* More dropdown - outside scroll container to avoid clipping */}
-        <div className="shrink-0 order-last sm:order-none">
-          <Dropdown
+          {/* More dropdown - outside scroll container to avoid clipping */}
+          <div className="shrink-0">
+            <Dropdown
             trigger={
               <button
                 aria-label="More workspace tools"
@@ -146,7 +194,7 @@ export function WorkspaceToolbar() {
                   'relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap transition-all shrink-0',
                   hasSecondaryActiveView
                     ? 'bg-[var(--ff-primary)]/12 text-[var(--ff-primary)]'
-                    : 'text-[var(--ff-text-muted)] hover:text-white hover:bg-[var(--ff-surface-2)]'
+                    : 'text-[var(--ff-text-muted)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)]'
                 )}
               >
                 <Icons.MoreHorizontal size={13} />
@@ -163,7 +211,14 @@ export function WorkspaceToolbar() {
                 </DropdownItem>
               );
             })}
+            <DropdownItem icon={<MessageSquarePlus size={14} />} onClick={() => dispatchChat('ff:new-chat')}>New chat</DropdownItem>
+            <DropdownItem icon={<Copy size={14} />} onClick={() => dispatchChat('ff:copy-last')}>Copy last response</DropdownItem>
+            <DropdownItem icon={<RotateCcw size={14} />} onClick={() => dispatchChat('ff:retry-last')}>Retry last response</DropdownItem>
+            {window.flutterforgeDesktop?.isDesktop && (
+              <DropdownItem icon={<FolderOpen size={14} />} onClick={() => void openProjectFolder()}>Open project folder</DropdownItem>
+            )}
           </Dropdown>
+          </div>
         </div>
 
         {/* ── Right: command + build actions ───────────────── */}
@@ -184,10 +239,10 @@ export function WorkspaceToolbar() {
             variant="ghost"
             size="sm"
             icon={<RotateCw size={13} />}
-            onClick={() => toast('info', 'Reloading preview...')}
+            onClick={handleBuild}
             className="hidden md:flex"
           >
-            <span className="hidden lg:inline">Reload</span>
+            <span className="hidden lg:inline">Rebuild</span>
           </Button>
 
           {/* Run / Build */}
@@ -198,7 +253,7 @@ export function WorkspaceToolbar() {
             loading={isBuilding}
             onClick={handleBuild}
           >
-            <span>{isBuilding ? 'Building...' : 'Run'}</span>
+            <span>{isBuilding ? 'Building...' : 'Build'}</span>
           </Button>
 
           {/* Build dropdown */}
@@ -206,7 +261,7 @@ export function WorkspaceToolbar() {
             trigger={
               <button
                 aria-label="Build options"
-                className="p-2 rounded-lg text-[var(--ff-text-muted)] hover:text-white hover:bg-[var(--ff-surface-2)] transition-all"
+                className="p-2 rounded-lg text-[var(--ff-text-muted)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)] transition-all"
               >
                 <Hammer size={13} />
               </button>
@@ -215,11 +270,8 @@ export function WorkspaceToolbar() {
             <DropdownItem icon={<Hammer size={14} />} onClick={handleBuild}>
               Build Flutter Web
             </DropdownItem>
-            <DropdownItem icon={<Download size={14} />} onClick={() => toast('info', 'Export ZIP coming soon')}>
+            <DropdownItem icon={<Download size={14} />} onClick={handleExportZip}>
               Export as ZIP
-            </DropdownItem>
-            <DropdownItem icon={<Rocket size={14} />} onClick={() => toast('info', 'Deploy to Supabase coming soon')}>
-              Deploy to Supabase
             </DropdownItem>
           </Dropdown>
         </div>

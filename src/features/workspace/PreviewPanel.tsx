@@ -1,71 +1,26 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Smartphone,
   Tablet,
   Monitor,
   RotateCw,
-  Play,
-  Square,
   Maximize2,
   RefreshCw,
-  Loader2,
-  FileCode2,
-  Layers,
-  Info,
   Sparkles,
   ZoomIn,
   ZoomOut,
   ExternalLink,
+  Hammer,
   AlertCircle,
+  Loader2,
+  Globe,
 } from 'lucide-react';
 import { useWorkspaceStore } from '@/stores/workspace.store';
 import { useProjectStore } from '@/stores/project.store';
 import { useTerminalStore } from '@/stores/terminal.store';
 import { usePreviewStore } from '@/stores/preview.store';
 import { DEVICE_PRESETS } from '@/utils/constants';
-import { PreviewCanvas } from './preview/PreviewCanvas';
-import Grainient from '@/components/Grainient';
 import { cn } from '@/utils/cn';
-
-function useGyro() {
-  const [gyro, setGyro] = useState({ x: 0, y: 0, enabled: false });
-  const requestPermission = async () => {
-    try {
-      const DOE = (window as unknown as { DeviceOrientationEvent?: { requestPermission?: () => Promise<string> } }).DeviceOrientationEvent;
-      if (DOE && typeof DOE.requestPermission === 'function') {
-        const res = await DOE.requestPermission();
-        if (res !== 'granted') return;
-      }
-      setGyro((g) => ({ ...g, enabled: true }));
-    } catch {
-      setGyro((g) => ({ ...g, enabled: true }));
-    }
-  };
-  // mousemove always active for Mac/desktop - no permission needed
-  useEffect(() => {
-    const handleMouse = (e: MouseEvent) => {
-      const x = (e.clientX / window.innerWidth) * 2 - 1;
-      const y = (e.clientY / window.innerHeight) * 2 - 1;
-      setGyro((g) => ({ ...g, x: x * 0.5, y: y * 0.5, enabled: g.enabled || true }));
-    };
-    window.addEventListener('mousemove', handleMouse);
-    return () => window.removeEventListener('mousemove', handleMouse);
-  }, []);
-  // deviceorientation only when enabled (iOS)
-  useEffect(() => {
-    if (!gyro.enabled) return;
-    const handle = (e: DeviceOrientationEvent) => {
-      const gamma = e.gamma ?? 0;
-      const beta = e.beta ?? 0;
-      const x = Math.max(-1, Math.min(1, gamma / 30));
-      const y = Math.max(-1, Math.min(1, beta / 30));
-      setGyro((g) => ({ ...g, x, y }));
-    };
-    window.addEventListener('deviceorientation', handle, true);
-    return () => window.removeEventListener('deviceorientation', handle);
-  }, [gyro.enabled]);
-  return { ...gyro, requestPermission };
-}
 
 const DEVICE_TABS = [
   { label: 'Mobile', device: 'iPhone 15 Pro', icon: Smartphone },
@@ -75,64 +30,47 @@ const DEVICE_TABS = [
 
 export function PreviewPanel() {
   const { previewDevice, setPreviewDevice, previewOrientation, setPreviewOrientation } = useWorkspaceStore();
-  const { files, currentProject } = useProjectStore();
-  const { isBuilding, addBuildLog, setBuilding, clearBuildLogs } = useTerminalStore();
+  const { files, currentProject, messages } = useProjectStore();
+  const { isGenerating, currentPhase, addBuildLog } = useTerminalStore();
   const preview = usePreviewStore();
+
   const [zoom, setZoom] = useState(100);
   const [fullscreen, setFullscreen] = useState(false);
-  const [inspectMode, setInspectMode] = useState(false);
-  const [selectedScreen, setSelectedScreen] = useState<string>('Home');
+  const [autoBuildAttempted, setAutoBuildAttempted] = useState(false);
+  const previewMode = 'web' as const;
+
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const gyro = useGyro();
+  const terminalLogRef = useRef<HTMLDivElement>(null);
 
   const projectId = currentProject?.id || '';
   const session = projectId ? preview.getSession(projectId) : null;
   const status = session?.status || 'idle';
-  const isPreviewBuilding = status === 'queued' || status === 'building';
+  const isBuilding = status === 'queued' || status === 'building';
   const isRunning = status === 'running' && !!session?.url;
   const previewUrl = session?.url || null;
   const previewError = preview.error;
-
-  // Sync preview logs -> terminal store BuildOutputPanel
-  useEffect(() => {
-    if (!session?.logs) return;
-    // push new logs to terminal
-    const last = session.logs[session.logs.length - 1];
-    if (last) addBuildLog(last);
-  }, [session?.logs?.length]);
-
-  const handleRun = async () => {
-    if (!projectId) return;
-    if (isRunning) {
-      if (session) await preview.stop(session.sessionId);
-      return;
-    }
-    clearBuildLogs();
-    setBuilding(true);
-    try {
-      await preview.build(projectId, files as any);
-    } catch (e) {
-      // error already in store
-    } finally {
-      setBuilding(false);
-    }
-  };
-
-  const handleRefresh = () => {
-    if (iframeRef.current) iframeRef.current.src = iframeRef.current.src;
-    if (isRunning && projectId) {
-      // rebuild
-      handleRun();
-    }
-  };
 
   const device = DEVICE_PRESETS.find((d) => d.name === previewDevice) ?? DEVICE_PRESETS[0];
   const isPortrait = previewOrientation === 'portrait';
   const rawW = isPortrait ? device.width : device.height;
   const rawH = isPortrait ? device.height : device.width;
 
-  // Dynamically compute scale to fit the container
+  // Auto-scroll build logs
+  useEffect(() => {
+    if (terminalLogRef.current) {
+      terminalLogRef.current.scrollTop = terminalLogRef.current.scrollHeight;
+    }
+  }, [session?.logs?.length]);
+
+  // Sync session logs to workspace BuildOutputPanel
+  useEffect(() => {
+    if (!session?.logs) return;
+    const last = session.logs[session.logs.length - 1];
+    if (last) addBuildLog(last);
+  }, [session?.logs?.length, addBuildLog]);
+
+  // Dynamic scale-to-fit
   const [containerSize, setContainerSize] = useState({ w: 700, h: 600 });
   useEffect(() => {
     if (!containerRef.current) return;
@@ -144,27 +82,278 @@ export function PreviewPanel() {
     return () => observer.disconnect();
   }, []);
 
-  const autoScale = Math.min(
-    (containerSize.w - 64) / rawW,
-    (containerSize.h - 64) / rawH,
-    1,
-  );
+  const autoScale = Math.min((containerSize.w - 64) / rawW, (containerSize.h - 64) / rawH, 1);
   const scale = (autoScale * zoom) / 100;
   const displayW = Math.round(rawW * scale);
   const displayH = Math.round(rawH * scale);
 
-  // Flutter/Dart project files from the store
-  const dartFiles = files.filter((f) => !f.is_directory && f.path.endsWith('.dart'));
+  const dartFiles = useMemo(() => files.filter((f) => !f.is_directory && f.path.endsWith('.dart')), [files]);
   const hasProject = dartFiles.length > 0;
-  const mainFile = files.find((f) => f.path === 'lib/main.dart');
-  const screens = dartFiles.filter((f) => f.path.includes('/screens/') || f.path.includes('/pages/'));
-  const pubspec = files.find((f) => f.path === 'pubspec.yaml');
+
+  // A fresh project only contains the identical starter-template files until
+  // the AI generates the real app (messages appear). Auto-building those
+  // boilerplate files would pin the preview to the same generic app for
+  // every new project — the generation pipeline triggers the real build.
+  const hasGeneratedApp = messages.length > 0;
+
+  // Reset per-project so switching projects re-arms the auto-build for the
+  // newly opened project instead of inheriting the previous project's flag.
+  useEffect(() => {
+    setAutoBuildAttempted(false);
+    if (projectId) {
+      preview.checkProjectStatus(projectId);
+    }
+  }, [projectId]);
+
+  // Trigger real build
+  const handleCompileWeb = async () => {
+    if (!projectId || files.length === 0 || isBuilding) return;
+    try {
+      const compilableFiles = files
+        .filter((file) => !file.is_directory)
+        .map((file) => ({ path: file.path, content: file.content }));
+      await preview.build(projectId, compilableFiles, {
+        supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+        supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      });
+    } catch (e) {
+      console.error('Failed to trigger Flutter Web build:', e);
+    }
+  };
+
+  // Auto-trigger build once the REAL generated app exists (not the starter
+  // template) if no live preview is running yet. Fresh projects with zero AI
+  // messages are skipped here — sendMessage() builds the fresh files itself
+  // the moment generation completes.
+  useEffect(() => {
+    if (hasProject && hasGeneratedApp && !autoBuildAttempted && status === 'idle' && !isGenerating) {
+      setAutoBuildAttempted(true);
+      handleCompileWeb();
+    }
+  }, [hasProject, hasGeneratedApp, autoBuildAttempted, status, isGenerating]);
+
+  const handleRefresh = () => {
+    if (iframeRef.current && isRunning && previewUrl) {
+      // The warm preview is a different loopback origin, so reload by setting
+      // a cache-busted src rather than reaching into contentWindow.
+      const url = new URL(previewUrl, window.location.href);
+      url.searchParams.set('r', String(Date.now()));
+      iframeRef.current.src = url.toString();
+    } else {
+      handleCompileWeb();
+    }
+  };
+
+  /* ── What to show inside the device screen ─── */
+  const renderScreenContent = () => {
+    // 1. AI is actively synthesizing code
+    if (isGenerating) {
+      return (
+        <div className="w-full h-full flex flex-col items-center justify-center bg-[#070b12] text-center px-6">
+          <Loader2 size={22} className="text-[#02AFB9] animate-spin mb-3" />
+          <p className="text-[12px] font-semibold text-slate-100">Building your app…</p>
+          <p className="text-[10px] text-slate-400 mt-1 max-w-[220px] truncate">
+            {currentPhase || 'Writing Flutter files'}
+          </p>
+        </div>
+      );
+    }
+
+    // 2. Web mode: Real Flutter Web Build in Progress — live compiler terminal
+    if (previewMode === 'web' && isBuilding) {
+      return (
+        <div className="w-full h-full flex flex-col bg-slate-950 p-4 select-none font-sans overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between pb-3 border-b border-white/10 shrink-0">
+            <div className="flex items-center gap-2">
+              <div className="relative w-7 h-7 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
+                <Loader2 size={14} className="text-indigo-400 animate-spin" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-white">Compiling Flutter Web</h4>
+                <p className="text-[9px] text-slate-400">flutter build web --release</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-[9px] font-mono animate-pulse">
+                Building...
+              </span>
+            </div>
+          </div>
+
+          {/* Terminal log output */}
+          <div
+            ref={terminalLogRef}
+            className="flex-1 my-3 bg-black/60 rounded-xl p-3 border border-white/5 font-mono text-[9.5px] text-slate-300 overflow-y-auto ff-scrollbar space-y-1"
+          >
+            {session?.logs && session.logs.length > 0 ? (
+              session.logs.map((log, i) => (
+                <div key={i} className="leading-relaxed font-mono break-all">
+                  <span className="text-indigo-400 mr-1.5">›</span>
+                  <span className={log.includes('error') || log.includes('Error') ? 'text-red-400 font-bold' : log.includes('success') ? 'text-emerald-400 font-bold' : 'text-slate-300'}>
+                    {log}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <div className="text-slate-500 italic">Initializing build container and resolving dependencies...</div>
+            )}
+          </div>
+
+          {/* Footer note */}
+          <div className="shrink-0 text-center text-[9px] text-slate-500">
+            Real Flutter engine build · Serving to iframe upon completion
+          </div>
+        </div>
+      );
+    }
+
+    // 3. Web mode: Real Flutter Web Compiled & Running — serve via iframe.
+    if (previewMode === 'web' && isRunning && previewUrl) {
+      return (
+        <div className="relative w-full h-full bg-slate-950">
+          <iframe
+            key={session?.sessionId}
+            ref={iframeRef}
+            src={previewUrl}
+            title="Real Flutter Web Preview"
+            className="w-full h-full border-0 bg-slate-950"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-modals"
+            allow="clipboard-write; geolocation; microphone; camera"
+          />
+          {/* Live badge */}
+          <div className="absolute top-2.5 right-2.5 z-30 pointer-events-none">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-900/80 border border-emerald-500/30 text-emerald-300 text-[9px] font-bold backdrop-blur-md shadow-lg">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Real Flutter Web</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 4. Web mode: Build failed state
+    if (previewMode === 'web' && (status === 'failed' || previewError)) {
+      const logs = session?.logs ?? [];
+      const causeLines = logs.filter((l) =>
+        /error|exception|because|depends on|version solving|failed to|not found|no such|invalid/i.test(l),
+      );
+      const lastLine = logs[logs.length - 1];
+      const shown = [...causeLines.slice(0, 8)];
+      if (lastLine && !shown.includes(lastLine)) shown.push(lastLine);
+      return (
+        <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-slate-950 text-center select-none overflow-y-auto ff-scrollbar">
+          <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-center mb-3 shrink-0">
+            <AlertCircle size={24} className="text-red-400" />
+          </div>
+          <h3 className="text-sm font-bold text-white mb-1">Flutter Web Build Failed</h3>
+          <p className="text-[10px] text-slate-400 max-w-[240px] mb-3 leading-relaxed">
+            {previewError || 'The Flutter web compiler reported errors. Fix the code or retry the build.'}
+          </p>
+          {shown.length > 0 && (
+            <div className="w-full max-w-[420px] max-h-40 overflow-y-auto ff-scrollbar text-left font-mono text-[9px] leading-relaxed bg-black/60 border border-red-500/20 rounded-xl p-3 mb-4 space-y-1">
+              {shown.map((l, i) => (
+                <div key={i} className="text-red-300/90 break-all">{l}</div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleCompileWeb}
+              className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-lg shadow-indigo-600/30 active:scale-95 transition-all flex items-center gap-2 shrink-0"
+            >
+              <Hammer size={12} />
+              <span>Retry Web Build</span>
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+
+
+    // 7. Web mode with no build yet — trigger one automatically if files exist
+    if (previewMode === 'web' && hasProject && !isBuilding) {
+      return (
+        <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-center select-none">
+          <div className="relative w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-600 to-pink-500 p-0.5 shadow-xl shadow-indigo-500/25 flex items-center justify-center mb-4">
+            <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
+              <Globe size={24} className="text-indigo-400" />
+            </div>
+          </div>
+          <h3 className="text-sm font-bold text-white mb-1">Real Flutter Web Build</h3>
+          <p className="text-[10px] text-slate-400 max-w-[240px] mb-4 leading-relaxed">
+            {hasProject
+              ? 'Compile your generated Flutter app with the real Web engine for a pixel-perfect preview.'
+              : 'Generate a Flutter app first, then compile it with the Web engine.'}
+          </p>
+          <div className="flex items-center gap-2">
+            {hasProject && (
+              <button
+                onClick={handleCompileWeb}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-400 hover:to-purple-500 text-white font-bold text-xs shadow-xl shadow-indigo-500/30 active:scale-95 transition-all flex items-center gap-2"
+              >
+                <Hammer size={12} />
+                <span>Compile Web</span>
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // 7. Standby state (no files generated yet)
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-slate-950 text-center select-none text-slate-100">
+        <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-3">
+          <Sparkles size={22} className="text-indigo-400" />
+        </div>
+        <h3 className="text-sm font-bold text-white mb-1">Instant Flutter Preview</h3>
+        <p className="text-[10px] text-slate-400 max-w-[240px] leading-relaxed">
+          Describe your application in the AI Builder to synthesize full production Flutter code with real-time interactive preview.
+        </p>
+      </div>
+    );
+  };
+
+  // If AI generation is in progress and there is no previous build, show a
+  // compact placeholder instead of replacing the whole workspace with a
+  // multi-stage progress dashboard. The chat panel owns the live activity.
+  if (isGenerating) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center bg-[var(--ff-bg)] text-center px-6">
+        <Loader2 size={22} className="text-[var(--ff-primary)] animate-spin mb-3" />
+        <p className="text-[12px] font-semibold text-[var(--ff-text)]">Building your app…</p>
+        <p className="text-[10px] text-[var(--ff-text-dim)] mt-1 max-w-[240px] truncate">
+          {currentPhase || 'Writing Flutter files'}
+        </p>
+      </div>
+    );
+  }
+
+  // If fresh project has not yet completed initial generation, keep preview locked
+  if (!hasGeneratedApp && files.length <= 6) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center p-8 bg-[var(--ff-bg)] text-center select-none text-[var(--ff-text)]">
+        <div className="w-14 h-14 rounded-2xl bg-[var(--ff-studio-yellow)]/60 border border-[var(--ff-border)] flex items-center justify-center mb-4">
+          <Sparkles size={26} className="text-[var(--ff-text)]" />
+        </div>
+        <h3 className="ff-display text-lg font-bold text-[var(--ff-text)] mb-2">Preview ready when you are</h3>
+        <p className="text-xs text-[var(--ff-text-muted)] max-w-sm leading-relaxed mb-4">
+          Describe the app in the AI Builder. The real Flutter web preview appears here as soon as the first build is ready.
+        </p>
+        <div className="ff-studio-badge">
+          <span className="w-2 h-2 rounded-full bg-[#141414] animate-pulse" />
+          <span>Awaiting generation</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={cn('flex flex-col bg-[var(--ff-bg)]', fullscreen ? 'fixed inset-0 z-50' : 'h-full')}>
-
-      {/* ── Toolbar ───────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-2 sm:px-3 py-2 border-b border-[var(--ff-border)] bg-[var(--ff-surface)] shrink-0 gap-2">
+      {/* ── Toolbar ─────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-2 sm:px-3 py-2 border-b border-[var(--ff-border)] bg-[var(--ff-surface)] shrink-0">
         {/* Device tabs */}
         <div className="flex items-center gap-0.5 overflow-x-auto ff-scrollbar max-w-full">
           {DEVICE_TABS.map(({ label, device: d, icon: Icon }) => {
@@ -177,7 +366,7 @@ export function PreviewPanel() {
                   'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all',
                   active
                     ? 'bg-[var(--ff-primary)]/15 text-[var(--ff-primary)] border border-[var(--ff-primary)]/30'
-                    : 'text-[var(--ff-text-dim)] hover:text-white hover:bg-[var(--ff-surface-2)]'
+                    : 'text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)]'
                 )}
               >
                 <Icon size={13} />
@@ -187,18 +376,53 @@ export function PreviewPanel() {
           })}
         </div>
 
+        {/* Build / Rebuild Button */}
+        {hasProject && (
+          <button
+            onClick={handleCompileWeb}
+            disabled={isBuilding}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all disabled:opacity-50',
+              isRunning
+                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
+                : isBuilding
+                  ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+                  : 'ff-btn-primary'
+            )}
+          >
+            {isBuilding ? (
+              <>
+                <Loader2 size={12} className="animate-spin" />
+                <span>Compiling…</span>
+              </>
+            ) : isRunning ? (
+              <>
+                <RefreshCw size={12} />
+                <span>Rebuild Web</span>
+              </>
+            ) : (
+              <>
+                <Hammer size={12} />
+                <span>Compile Web</span>
+              </>
+            )}
+          </button>
+        )}
+
         {/* Zoom controls */}
         <div className="hidden md:flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--ff-bg)] border border-[var(--ff-border)]">
           <button
             onClick={() => setZoom((z) => Math.max(25, z - 25))}
-            className="text-[var(--ff-text-dim)] hover:text-white transition-colors p-0.5"
+            className="text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] transition-colors p-0.5"
+            title="Zoom Out"
           >
             <ZoomOut size={12} />
           </button>
           <span className="text-[10px] font-mono text-[var(--ff-text-muted)] w-8 text-center select-none">{zoom}%</span>
           <button
             onClick={() => setZoom((z) => Math.min(200, z + 25))}
-            className="text-[var(--ff-text-dim)] hover:text-white transition-colors p-0.5"
+            className="text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] transition-colors p-0.5"
+            title="Zoom In"
           >
             <ZoomIn size={12} />
           </button>
@@ -208,53 +432,32 @@ export function PreviewPanel() {
         <div className="flex items-center gap-1">
           <button
             onClick={() => setPreviewOrientation(isPortrait ? 'landscape' : 'portrait')}
-            className="p-1.5 rounded-md text-[var(--ff-text-dim)] hover:text-white hover:bg-[var(--ff-surface-2)] transition-all"
-            title="Rotate"
+            className="p-1.5 rounded-md text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)] transition-all"
+            title="Rotate Orientation"
           >
             <RotateCw size={13} />
           </button>
           <button
-            onClick={() => setInspectMode(!inspectMode)}
-            className={cn(
-              'flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-medium transition-all',
-              inspectMode
-                ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
-                : 'text-[var(--ff-text-dim)] hover:text-white hover:bg-[var(--ff-surface-2)]'
-            )}
-            title="Toggle Inspect Widget Tree mode"
-          >
-            <span>🔍</span>
-            <span className="hidden lg:inline">Inspect</span>
-          </button>
-          <button
-            onClick={handleRun}
-            disabled={isPreviewBuilding || isBuilding}
-            className={cn(
-              'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all disabled:opacity-50',
-              isRunning
-                ? 'bg-red-500/15 text-red-400 border border-red-500/20 hover:bg-red-500/25'
-                : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/25'
-            )}
-            title={isRunning ? 'Stop preview' : 'Build & run Flutter web in Docker'}
-          >
-            {isPreviewBuilding ? <Loader2 size={12} className="animate-spin" /> : isRunning ? <Square size={12} /> : <Play size={12} />}
-            <span className="hidden sm:inline">{isPreviewBuilding ? 'Building...' : isRunning ? 'Stop' : 'Run'}</span>
-          </button>
-          <button
             onClick={handleRefresh}
-            className="p-1.5 rounded-md text-[var(--ff-text-dim)] hover:text-white hover:bg-[var(--ff-surface-2)] transition-all"
-            title="Reload iframe / Rebuild"
+            className="p-1.5 rounded-md text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)] transition-all"
+            title="Reload Preview"
           >
             <RefreshCw size={13} />
           </button>
           {isRunning && previewUrl && (
-            <a href={previewUrl} target="_blank" rel="noreferrer" className="p-1.5 rounded-md text-[var(--ff-text-dim)] hover:text-white hover:bg-[var(--ff-surface-2)] transition-all" title="Open in new tab">
+            <a
+              href={previewUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="p-1.5 rounded-md text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)] transition-all"
+              title="Open in new tab"
+            >
               <ExternalLink size={13} />
             </a>
           )}
           <button
             onClick={() => setFullscreen(!fullscreen)}
-            className="p-1.5 rounded-md text-[var(--ff-text-dim)] hover:text-white hover:bg-[var(--ff-surface-2)] transition-all"
+            className="p-1.5 rounded-md text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)] transition-all"
             title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
           >
             <Maximize2 size={13} />
@@ -263,162 +466,39 @@ export function PreviewPanel() {
       </div>
 
       {/* ── Preview canvas ──────────────────────────────────────── */}
-      <div ref={containerRef} className="flex-1 flex items-center justify-center overflow-hidden bg-[#0d0d10] relative p-4">
-        {/* Grainient Background - responsive */}
-        {/* Gyro-reactive Grainient background */}
-        <div className="absolute inset-0 overflow-hidden bg-[#0a0a0f]">
+      <div ref={containerRef} className="flex-1 flex items-center justify-center overflow-hidden relative p-4">
+        {/* Paper canvas: no synthetic mock — the real Flutter build lives in the device. */}
+        <div className="absolute inset-0 bg-[var(--ff-bg)] ff-studio-grid" />
+
+        {/* ── Device frame ── */}
+        <div
+          className="relative z-10 transition-all duration-300"
+          style={{ width: displayW, height: displayH }}
+        >
+          {/* Outer device shell */}
           <div
-            className="absolute inset-0 w-full h-full transition-transform duration-300 ease-out will-change-transform"
-            style={{
-              transform: `translate3d(${gyro.x * 18}px, ${gyro.y * 18}px, 0) scale(1.05)`,
-            }}
-          >
-            <Grainient
-              color1="#FF9FFC"
-              color2="#5227FF"
-              color3="#B497CF"
-              timeSpeed={0.25}
-              colorBalance={-0.15 + gyro.x * 0.08}
-              warpStrength={3.6}
-              warpFrequency={7.8}
-              warpSpeed={5.9}
-              warpAmplitude={48 + gyro.y * 10}
-              blendAngle={145 + gyro.x * 18}
-              blendSoftness={0}
-              rotationAmount={700 + gyro.x * 80}
-              noiseScale={3.3}
-              grainAmount={0.36}
-              grainScale={2}
-              grainAnimated={false}
-              contrast={1.5}
-              gamma={1}
-              saturation={1}
-              centerX={gyro.x * 0.35}
-              centerY={gyro.y * 0.35}
-              zoom={0.9}
-              className="w-full h-full"
-            />
+            className="absolute inset-0 rounded-[2rem] bg-[#1a1a1a]"
+            style={{ boxShadow: '0 0 0 4px #141414, 8px 8px 0 #f2d45c, 0 30px 80px rgba(0,0,0,0.25)' }}
+          />
+
+          {/* Dynamic Island (phones only) */}
+          {previewDevice === 'iPhone 15 Pro' && isPortrait && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 w-28 h-6 bg-black rounded-full z-20 flex items-center justify-center gap-1.5 pointer-events-none select-none">
+              <div className="w-2 h-2 rounded-full bg-[#222]" />
+              <div className="w-3 h-3 rounded-full bg-[#222] border border-white/5" />
+            </div>
+          )}
+
+          {/* Screen */}
+          <div className="absolute rounded-[1.6rem] overflow-hidden bg-slate-950" style={{ inset: 4 }}>
+            {renderScreenContent()}
           </div>
-          <div className="absolute inset-0 bg-black/20 pointer-events-none" />
-          {!gyro.enabled && 'ontouchstart' in window && (
-            <button
-              onClick={gyro.requestPermission}
-              className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-[10px] font-medium text-white hover:bg-white/15 transition-colors flex items-center gap-1.5"
-            >
-              <span>📱</span> Enable Gyro
-            </button>
+
+          {/* Home bar (phones) */}
+          {previewDevice === 'iPhone 15 Pro' && isPortrait && (
+            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-28 h-1 rounded-full bg-white/30 z-20 pointer-events-none select-none" />
           )}
         </div>
-        {/* Subtle grid overlay */}
-        <div
-          className="absolute inset-0 opacity-[0.04] pointer-events-none"
-          style={{
-            backgroundImage: 'linear-gradient(#3b82f6 1px, transparent 1px), linear-gradient(90deg, #3b82f6 1px, transparent 1px)',
-            backgroundSize: '40px 40px',
-          }}
-        />
-
-
-
-        {isPreviewBuilding || isBuilding ? (
-          <div className="flex flex-col items-center gap-4 z-10 max-w-[80%]">
-            <div className="relative w-14 h-14">
-              <div className="w-14 h-14 rounded-2xl bg-[var(--ff-primary)]/10 flex items-center justify-center">
-                <Sparkles size={24} className="text-[var(--ff-primary)]" />
-              </div>
-              <div className="absolute inset-0 rounded-2xl border-2 border-[var(--ff-primary)] border-t-transparent ff-spin" />
-            </div>
-            <div className="text-center">
-              <p className="text-sm font-semibold text-white">Building Flutter Web in Docker...</p>
-              <p className="text-xs text-[var(--ff-text-dim)] mt-1">
-                {session?.logs?.[session.logs.length - 1] || 'Compiling Dart & resolving assets (60-90s first build)'}
-              </p>
-              {previewError && <p className="text-xs text-red-400 mt-2 flex items-center justify-center gap-1"><AlertCircle size={12} />{previewError}</p>}
-            </div>
-            {session?.logs && session.logs.length > 1 && (
-              <div className="w-full max-h-32 overflow-y-auto bg-black/50 rounded-lg p-2 font-mono text-[10px] text-white/60 text-left">
-                {session.logs.slice(-8).map((l, i) => <div key={i} className="truncate">{l}</div>)}
-              </div>
-            )}
-          </div>
-        ) : (
-          /* Device frame */
-          <div
-            className="relative z-10 transition-all duration-300"
-            style={{ width: displayW, height: displayH }}
-          >
-            {/* Outer device shell */}
-            <div
-              className="absolute inset-0 rounded-[2rem] bg-[#1a1a1a] shadow-2xl shadow-black/70"
-              style={{ boxShadow: '0 0 0 3px #333, 0 30px 80px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.08)' }}
-            />
-
-            {/* Notch / Dynamic Island (phones only) */}
-            {previewDevice === 'iPhone 15 Pro' && isPortrait && (
-              <div className="absolute top-3 left-1/2 -translate-x-1/2 w-28 h-6 bg-black rounded-full z-20 flex items-center justify-center gap-1.5">
-                <div className="w-2 h-2 rounded-full bg-[#222]" />
-                <div className="w-3 h-3 rounded-full bg-[#222] border border-white/5" />
-              </div>
-            )}
-
-            {/* Screen */}
-            <div
-              className="absolute rounded-[1.6rem] overflow-hidden bg-white"
-              style={{ inset: 4 }}
-            >
-              {isRunning && previewUrl ? (
-                <iframe
-                  ref={iframeRef}
-                  src={previewUrl}
-                  title="Flutter Web Preview"
-                  className="w-full h-full border-0 bg-white"
-                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
-                  allow="clipboard-write"
-                />
-              ) : status === 'failed' ? (
-                <div className="w-full h-full flex flex-col items-center justify-center bg-white text-center p-4 gap-3">
-                  <AlertCircle size={24} className="text-red-400" />
-                  <div>
-                    <p className="text-xs font-semibold text-red-600">Docker Build Failed</p>
-                    <p className="text-[10px] text-red-400 mt-1 line-clamp-3 font-mono bg-red-50 p-2 rounded">{session?.logs?.slice(-5).join('\n') || previewError || 'Check Build output panel'}</p>
-                    <p className="text-[9px] text-gray-400 mt-2">Docker overloaded on 8GB - prune and retry</p>
-                  </div>
-                  <button onClick={handleRun} className="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-400 text-white text-xs font-semibold flex items-center gap-1.5">
-                    <RefreshCw size={12} /> Retry Docker Build
-                  </button>
-                </div>
-              ) : hasProject ? (
-                <div className="relative w-full h-full">
-                  <PreviewCanvas
-                    files={files}
-                    projectName={currentProject?.name}
-                    activeScreen={selectedScreen}
-                    onScreenChange={(s) => setSelectedScreen(s)}
-                    inspectMode={inspectMode}
-                  />
-                  {/* Quick Docker Run Pill Overlay */}
-                  <div className="absolute top-2 right-2 z-30">
-                    <button
-                      onClick={handleRun}
-                      className="flex items-center gap-1 px-2 py-1 rounded-full bg-black/60 backdrop-blur-md hover:bg-black/80 text-[9px] font-bold text-emerald-400 border border-white/10 transition-all shadow-sm"
-                      title="Compile real Flutter Web with Docker"
-                    >
-                      <Play size={8} />
-                      <span>Docker</span>
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <NoProjectPreview onGoToAI={() => {}} />
-              )}
-            </div>
-
-            {/* Bottom home bar (phones) */}
-            {previewDevice === 'iPhone 15 Pro' && isPortrait && (
-              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-28 h-1 rounded-full bg-white/30 z-20" />
-            )}
-          </div>
-        )}
 
         {/* Dims label */}
         <div className="absolute bottom-3 right-3 text-[9px] font-mono text-white/20">
@@ -426,98 +506,39 @@ export function PreviewPanel() {
         </div>
       </div>
 
-      {/* ── Status bar ─────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-t border-[var(--ff-border)] bg-[var(--ff-surface)] shrink-0 text-[10px] text-[var(--ff-text-dim)]">
-        <div className="flex items-center gap-3">
-          <span>{device.name}</span>
-          <span className="opacity-40">·</span>
-          <span>{rawW}×{rawH}</span>
+      {/* ── Status bar ──────────────────────────────────────────── */}
+      <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-t border-[var(--ff-border)] bg-[var(--ff-surface)] shrink-0 text-[10px] text-[var(--ff-text-dim)]">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="truncate">{device.name}</span>
+          <span className="opacity-40 shrink-0">·</span>
+          <span className="shrink-0">{rawW}×{rawH}</span>
           {hasProject && (
             <>
-              <span className="opacity-40">·</span>
-              <span className="flex items-center gap-1 text-emerald-400">
-                <FileCode2 size={9} />
-                {dartFiles.length} files
-              </span>
+              <span className="opacity-40 shrink-0">·</span>
+              <span className="text-emerald-400 truncate hidden xs:inline">{dartFiles.length} Dart files</span>
             </>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0 min-w-0">
           <span className={cn(
-            'flex items-center gap-1 font-medium',
-            isRunning ? 'text-emerald-400' : isPreviewBuilding ? 'text-amber-400' : status === 'failed' ? 'text-red-400' : 'text-[var(--ff-text-dim)]'
+            'flex items-center gap-1.5 font-medium',
+            isRunning ? 'text-emerald-400' : isBuilding ? 'text-indigo-400' : status === 'failed' ? 'text-red-400' : 'text-slate-400'
           )}>
-            <span className={cn('w-1.5 h-1.5 rounded-full', isRunning ? 'bg-emerald-400 animate-pulse' : isPreviewBuilding ? 'bg-amber-400 animate-pulse' : status === 'failed' ? 'bg-red-400' : 'bg-white/20')} />
-            {isPreviewBuilding ? 'Building' : isRunning ? 'Running' : status === 'failed' ? 'Failed' : 'Stopped'}
+            <span className={cn(
+              'w-1.5 h-1.5 rounded-full',
+              isRunning ? 'bg-emerald-400 animate-pulse' : isBuilding ? 'bg-indigo-400 animate-pulse' : status === 'failed' ? 'bg-red-400' : 'bg-slate-500'
+            )} />
+            <span>
+              {isRunning
+                ? 'Flutter Web Live (Real Build)'
+                : isBuilding
+                  ? 'Compiling Flutter Web…'
+                  : status === 'failed'
+                    ? 'Build Failed'
+                    : 'Ready to Compile'}
+            </span>
           </span>
-          {previewUrl && <span className="hidden md:inline opacity-40 truncate max-w-[160px]">{previewUrl}</span>}
         </div>
-      </div>
-    </div>
-  );
-}
-
-/* ── Idle / not-running screen ─────────────────────────────────── */
-function IdleScreen({
-  onRun,
-  hasProject,
-  fileCount,
-  projectName,
-}: {
-  onRun: () => void;
-  hasProject: boolean;
-  fileCount: number;
-  projectName?: string;
-}) {
-  const apiOk = typeof window !== 'undefined' && (import.meta.env.VITE_PREVIEW_API_URL || 'http://localhost:3001');
-  return (
-    <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-[#0f1117] to-[#1a1a2e] text-white select-none">
-      <div className="flex flex-col items-center gap-3 px-6 text-center">
-        {hasProject ? (
-          <>
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#3b82f6]/20 to-purple-500/20 flex items-center justify-center border border-white/10">
-              <Layers size={24} className="text-[#3b82f6]" />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-white mb-0.5">{projectName ?? 'Flutter App'}</p>
-              <p className="text-[10px] text-white/40">{fileCount} Dart file{fileCount !== 1 ? 's' : ''} ready</p>
-            </div>
-            <button
-              onClick={onRun}
-              className="mt-1 flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-semibold transition-all hover:scale-105 active:scale-95 shadow-lg shadow-emerald-500/30"
-            >
-              <Play size={12} />
-              Run in Docker
-            </button>
-            <p className="text-[9px] text-white/20 mt-1">Free Docker 8GB · 15m TTL · auto-cleanup</p>
-          </>
-        ) : (
-          <>
-            <div className="w-14 h-14 rounded-2xl bg-white/5 flex items-center justify-center border border-white/10">
-              <Sparkles size={24} className="text-white/30" />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-white/60 mb-1">No app generated yet</p>
-              <p className="text-[10px] text-white/30 leading-relaxed">
-                Use the AI Builder panel to generate your Flutter app, then run the preview.
-              </p>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function NoProjectPreview({ onGoToAI }: { onGoToAI: () => void }) {
-  return (
-    <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50 text-center p-4 gap-3">
-      <Info size={20} className="text-gray-300" />
-      <div>
-        <p className="text-xs font-semibold text-gray-500">No code generated</p>
-        <p className="text-[9px] text-gray-400 mt-1 leading-relaxed">
-          Use the AI Builder to generate your Flutter app first.
-        </p>
       </div>
     </div>
   );

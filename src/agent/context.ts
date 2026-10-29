@@ -13,6 +13,11 @@ export class AgentContextBuilder {
     conversationHistory?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
     supabaseUrl?: string;
     supabaseAnonKey?: string;
+    platform?: string;
+    appId?: string;
+    usesSupabase?: boolean;
+    activeFile?: string | null;
+    buildErrors?: string[];
   }): AgentContext {
     const installedPackages = this.extractPubspecDependencies(params.files);
 
@@ -22,6 +27,11 @@ export class AgentContextBuilder {
       projectDescription: params.projectDescription,
       existingFiles: params.files.filter((f) => !f.isDirectory && !f.is_directory),
       installedPackages,
+      platform: params.platform,
+      appId: params.appId,
+      usesSupabase: params.usesSupabase,
+      activeFile: params.activeFile,
+      buildErrors: params.buildErrors,
       conversationHistory: params.conversationHistory ?? [],
       supabaseUrl: params.supabaseUrl,
       supabaseAnonKey: params.supabaseAnonKey,
@@ -138,7 +148,9 @@ export class AgentContextBuilder {
         inDeps = false;
         continue;
       }
-      if (inDeps && line.startsWith('  ') && trimmed.includes(':')) {
+      if (inDeps && /^ {2}[^ \t]/.test(line) && trimmed.includes(':')) {
+        // Exactly-2-space keys only: deeper lines are nested maps
+        // (e.g. `sdk: flutter` under `flutter:`) and must not be captured.
         const parts = trimmed.split(':');
         const key = parts[0]?.trim();
         const value = parts.slice(1).join(':').trim();

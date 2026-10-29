@@ -32,7 +32,7 @@ export function LoginForm() {
   return (
     <AuthLayout>
       <div className="ff-fade-in">
-        <h1 className="text-2xl font-bold text-white mb-2">Welcome back</h1>
+        <h1 className="text-2xl font-bold text-[var(--ff-text)] mb-2">Welcome back</h1>
         <p className="text-[var(--ff-text-muted)] mb-8">Sign in to your FlutterForge account</p>
 
         {(error || formError) && (
@@ -64,11 +64,7 @@ export function LoginForm() {
             autoComplete="current-password"
           />
 
-          <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 text-sm text-[var(--ff-text-muted)]">
-              <input type="checkbox" className="rounded border-[var(--ff-border)] bg-[var(--ff-surface-2)]" />
-              Remember me
-            </label>
+          <div className="flex items-center justify-end">
             <Link to="/forgot-password" className="text-sm text-[var(--ff-primary)] hover:underline">
               Forgot password?
             </Link>

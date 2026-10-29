@@ -87,7 +87,7 @@ class AnimatedStreakRing extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Keep it going! Complete today\'s workout to extend.',
+                  'Keep it going! Complete today's workout to extend.',
                   style: TextStyle(
                     fontSize: 12,
                     color: Colors.grey[600],
@@ -167,7 +167,7 @@ class _FitnessHomeScreenState extends State<FitnessHomeScreen> {
             ),
             const SizedBox(height: 20),
             const Text(
-              'Today\'s Workouts',
+              'Today's Workouts',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
@@ -589,6 +589,11 @@ class RealtimeStreamHelper<T> {
 ];
 
 export class VectorStore {
+  /** Set after OpenRouter rejects the embeddings endpoint — pattern retrieval
+   *  falls back to in-memory matching, so there is no reason to keep paying
+   *  the request (and console noise) for the rest of the session. */
+  private static embedUnavailable = false;
+
   /**
    * Generates text embedding vector using nomic-embed-text or OpenAI text-embedding-3-small via OpenRouter
    */
@@ -599,7 +604,7 @@ export class VectorStore {
       (typeof process !== 'undefined' && (process.env?.VITE_OPENROUTER_API_KEY || process.env?.OPENROUTER_API_KEY)) ||
       '';
 
-    if (!key) return null;
+    if (!key || this.embedUnavailable) return null;
 
     try {
       const controller = new AbortController();
@@ -620,7 +625,12 @@ export class VectorStore {
       });
       clearTimeout(tid);
 
-      if (!res.ok) return null;
+      if (!res.ok) {
+        // 4xx from this endpoint is account/model dependent and never
+        // recovers mid-session — stop retrying it.
+        if (res.status >= 400) this.embedUnavailable = true;
+        return null;
+      }
       const data = (await res.json()) as { data?: Array<{ embedding?: number[] }> };
       return data.data?.[0]?.embedding ?? null;
     } catch {

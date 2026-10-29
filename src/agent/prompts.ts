@@ -103,9 +103,19 @@ Your primary goal is to build beautiful, robust, pixel-perfect, scalable, and re
      - \`provider: ^6.1.2\`
      - \`flutter_animate: ^4.5.0\`
      - \`cached_network_image: ^3.4.1\`
-     - \`intl: ^0.19.0\`
+      - \`intl: ^0.20.3\`
+   - NEVER invent a package. Only depend on real pub.dev packages, preferring
+     the list above. NEVER add a dependency named after the app itself (a
+     package can never depend on itself — version solving fails).
 
-10. OUTPUT FORMAT:
+10. SELF-IMPORTS:
+   - Import your own files with RELATIVE imports, or as
+     \`package:<exact-appId>/...\` using the EXACT appId from the plan.
+   - NEVER shorten it to \`package:<stem>/...\` (e.g. \`package:apex/...\`
+     when the appId is \`apex_3e9d1a\`) — that URI can never resolve and the
+     build fails.
+
+11. OUTPUT FORMAT:
    - For NEW projects: Generate ALL files in a SINGLE response. Every file MUST be wrapped in a markdown code block with the filepath attribute:
      \`\`\`dart filepath="lib/main.dart"
      // Complete file content
@@ -153,7 +163,7 @@ Output a strictly formatted JSON object adhering to this schema:
     "provider": "^6.1.2",
     "flutter_animate": "^4.5.0",
     "cached_network_image": "^3.4.1",
-    "intl": "^0.19.0"
+    "intl": "^0.20.3"
   },
   "schema": {
     "projectName": "string",
@@ -251,10 +261,30 @@ CRITICAL INSTRUCTIONS:
 5. Use Supabase patterns: auth, realtime subscriptions, RLS policies on all tables.
 6. All imports must be correct and reference files that exist in this project.
 7. Generate pubspec.yaml with ALL dependencies used in the Dart code.
+   The \`flutter:\` section of pubspec.yaml may contain ONLY
+   \`uses-material-design: true\` and \`assets:\` — NEVER \`uses-material3\`
+   (Material 3 is enabled from Dart via \`ThemeData(useMaterial3: true)\`),
+   never \`fonts:\`, never any other invented key. \`flutter pub get\` rejects
+   unknown keys and fails the whole build.
+   Use the EXACT \`appId\` from the plan as the pubspec \`name:\` — never invent a
+   different package name, never reuse another app's name. Every app has a
+   different id. NEVER add a dependency named after the app itself, and NEVER
+   import your own files as \`package:<stem>/...\` — use relative imports or
+   \`package:<exact-appId>/...\`.
+   NEVER add a dependency derived from the app's own name (e.g. an app called
+   "Apex" must NOT depend on a package named \`apex\`). Only declare real,
+   well-known pub.dev packages that the Dart code actually imports with
+   \`package:\` imports — every declared dependency must have at least one
+   matching import, and every \`package:\` import must be declared.
 8. Generate main.dart with Supabase.initialize() and proper error handling.
 9. Generate GoRouter configuration with all screen routes.
 10. Generate SQL migrations with complete DDL and RLS policies for every table.
 11. Use {STATE_MANAGEMENT} for state management throughout the app.
+12. Every app MUST include a working Dark/Light/System theme toggle
+    (ThemeMode + ValueNotifier/Provider, persisted with shared_preferences,
+    toggle button in AppBar and Profile/Settings), with BOTH lightTheme and
+    darkTheme defined — default seed color #02AFB9 (teal) with #F07067 accent
+    unless the plan specifies otherwise.
 `.trim();
 
 export const INCREMENTAL_EDIT_PROMPT = `
@@ -297,3 +327,17 @@ Return ONLY the corrected, fully compilable code for {FILE_PATH} wrapped in:
 // Corrected code
 \`\`\`
 `.trim();
+
+/**
+ * Appended when the user did not ask for a backend. Kept as a separate block
+ * so the base prompt stays stable (and cacheable) for Supabase projects.
+ */
+export const NO_BACKEND_RULES = `
+## LOCAL-ONLY MODE (overrides Supabase instructions above)
+
+This app must NOT use Supabase or any backend.
+- Do NOT add \`supabase_flutter\`, authentication, SQL, RLS, or a server.
+- Do NOT create a \`supabase/\` directory or migration files.
+- Persist state with \`shared_preferences\` (or Hive) only when the app needs it.
+- Keep every feature functional offline; no placeholder buttons or fake data.
+`;

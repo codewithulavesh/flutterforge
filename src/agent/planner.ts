@@ -2,42 +2,54 @@ import type {
   AgentPlan,
   DatabaseSchemaPlan,
   TableDefinition,
-  ColumnDefinition,
-  RLSPolicyDefinition,
   ModelPlan,
   ServicePlan,
   ScreenPlan,
   AgentContext,
   DetectedFeatures,
 } from './types';
+import { generateUniqueAppId, getAndroidApplicationId, getIosBundleId } from '../utils/appId';
 
 export class AgentPlanner {
   /**
    * Plans the entire Flutter + Supabase application architecture based on user prompt and context
    */
-  public static plan(prompt: string, context: AgentContext): AgentPlan {
+  public static plan(
+    prompt: string,
+    context: AgentContext,
+    opts?: { stateManagement?: AgentPlan['stateManagement'] },
+  ): AgentPlan {
     const lower = prompt.toLowerCase();
     const appName = this.inferAppName(prompt, context.projectName);
     const domain = this.detectDomain(lower);
     const features = this.detectFeatures(prompt, domain);
-    const schema = this.planSchema(domain, prompt);
+    const schema = this.planSchema(domain);
     const models = this.planModels(schema);
     const services = this.planServices(domain, schema);
-    const screens = this.planScreens(domain, lower);
+    const screens = this.planScreens(domain);
     const theme = this.planTheme(domain, lower);
+
+    const stateManagement = opts?.stateManagement ?? 'change_notifier';
 
     const dependencies: Record<string, string> = {
       flutter: 'sdk',
       supabase_flutter: '^2.8.0',
       go_router: '^14.6.2',
       google_fonts: '^6.2.1',
-      provider: '^6.1.2',
-      intl: '^0.19.0',
+      intl: '^0.20.3',
       cached_network_image: '^3.4.1',
       flutter_animate: '^4.5.0',
       uuid: '^4.5.1',
       shared_preferences: '^2.3.2',
     };
+    // The offline generator + validator key off this: riverpod projects get
+    // flutter_riverpod (with ProviderScope/StateNotifier templates),
+    // everything else keeps provider/ChangeNotifier.
+    if (stateManagement === 'riverpod') {
+      dependencies['flutter_riverpod'] = '^2.5.1';
+    } else {
+      dependencies['provider'] = '^6.1.2';
+    }
 
     const devDependencies: Record<string, string> = {
       flutter_test: 'sdk',
@@ -54,6 +66,8 @@ export class AgentPlanner {
       'lib/app.dart',
       'lib/core/constants/app_constants.dart',
       'lib/core/theme/app_theme.dart',
+      'lib/core/theme/theme_controller.dart',
+      'lib/core/widgets/theme_toggle_button.dart',
       'lib/core/router/app_router.dart',
       'lib/core/utils/formatters.dart',
       'lib/core/widgets/custom_button.dart',
@@ -61,6 +75,7 @@ export class AgentPlanner {
       'lib/core/widgets/empty_state.dart',
       'lib/core/widgets/loading_indicator.dart',
       'lib/core/widgets/shimmer_skeleton.dart',
+      'lib/state/app_provider.dart',
       'supabase/migrations/001_initial_schema.sql',
       ...models.map((m) => m.filePath),
       ...services.map((s) => s.filePath),
@@ -78,12 +93,19 @@ export class AgentPlanner {
       }
     }
 
+    const appId = generateUniqueAppId(appName, context.projectId || undefined);
+
     return {
       id: crypto.randomUUID(),
       appName,
+      // Every new app gets a different id: slug + 6 chars from the project
+      // UUID (deterministic per project, unique across projects sharing a name).
+      appId,
+      applicationId: getAndroidApplicationId(appId),
+      bundleId: getIosBundleId(appId),
       appDescription: `Production-ready ${domain} Flutter application integrated with Supabase backend.`,
       architecture: 'feature_first',
-      stateManagement: 'change_notifier',
+      stateManagement,
       domain,
       features,
       theme,
@@ -120,13 +142,23 @@ export class AgentPlanner {
   private static inferAppName(prompt: string, fallback: string): string {
     if (prompt.match(/called\s+([A-Za-z0-9_]+)/i)) {
       const match = prompt.match(/called\s+([A-Za-z0-9_]+)/i);
-      if (match && match[1]) return match[1];
+      if (match && match[1]) return this.sanitizeAppName(match[1], fallback);
     }
     if (prompt.match(/named\s+([A-Za-z0-9_]+)/i)) {
       const match = prompt.match(/named\s+([A-Za-z0-9_]+)/i);
-      if (match && match[1]) return match[1];
+      if (match && match[1]) return this.sanitizeAppName(match[1], fallback);
     }
     return fallback || 'FlutterForgeApp';
+  }
+
+  /**
+   * App names flow into Dart class names and pubspec names, so they must be
+   * valid identifiers: strip illegal chars and leading digits/underscores
+   * (e.g. "3DViewer" -> "DViewer", never "3DViewerApp").
+   */
+  private static sanitizeAppName(name: string, fallback: string): string {
+    const cleaned = name.replace(/[^A-Za-z0-9_]/g, '').replace(/^[0-9_]+/, '');
+    return cleaned || fallback || 'FlutterForgeApp';
   }
 
   public static detectDomain(lower: string): string {
@@ -176,42 +208,15 @@ export class AgentPlanner {
   }
 
   private static planTheme(domain: string, lower: string) {
+    void domain;
     const isDark = lower.includes('dark');
-    switch (domain) {
-      case 'ecommerce':
-        return { primaryColor: '#2563EB', secondaryColor: '#F59E0B', backgroundColor: isDark ? '#0F172A' : '#FFFFFF', isDarkPreferred: isDark };
-      case 'social':
-        return { primaryColor: '#EC4899', secondaryColor: '#8B5CF6', backgroundColor: isDark ? '#111827' : '#FFFFFF', isDarkPreferred: isDark };
-      case 'tasks':
-        return { primaryColor: '#6366F1', secondaryColor: '#10B981', backgroundColor: isDark ? '#090D16' : '#FAFAFA', isDarkPreferred: isDark };
-      case 'fitness':
-        return { primaryColor: '#10B981', secondaryColor: '#06B6D4', backgroundColor: isDark ? '#060D12' : '#FFFFFF', isDarkPreferred: isDark };
-      case 'ai_chat':
-        return { primaryColor: '#8B5CF6', secondaryColor: '#3B82F6', backgroundColor: isDark ? '#0B0F19' : '#F8FAFC', isDarkPreferred: isDark };
-      case 'food':
-        return { primaryColor: '#EF4444', secondaryColor: '#F97316', backgroundColor: isDark ? '#181111' : '#FFFFFF', isDarkPreferred: isDark };
-      case 'crypto':
-        return { primaryColor: '#10B981', secondaryColor: '#6366F1', backgroundColor: isDark ? '#0A0E1A' : '#F9FAFB', isDarkPreferred: isDark };
-      case 'healthcare':
-        return { primaryColor: '#0284C7', secondaryColor: '#14B8A6', backgroundColor: isDark ? '#081119' : '#FFFFFF', isDarkPreferred: isDark };
-      case 'education':
-        return { primaryColor: '#7C3AED', secondaryColor: '#EC4899', backgroundColor: isDark ? '#0F0E1A' : '#FFFFFF', isDarkPreferred: isDark };
-      case 'booking':
-        return { primaryColor: '#0D9488', secondaryColor: '#F59E0B', backgroundColor: isDark ? '#091414' : '#FFFFFF', isDarkPreferred: isDark };
-      case 'music':
-        return { primaryColor: '#A855F7', secondaryColor: '#EC4899', backgroundColor: '#09090B', isDarkPreferred: true };
-      case 'travel':
-        return { primaryColor: '#0284C7', secondaryColor: '#F97316', backgroundColor: isDark ? '#0A1218' : '#FFFFFF', isDarkPreferred: isDark };
-      case 'real_estate':
-        return { primaryColor: '#1E293B', secondaryColor: '#3B82F6', backgroundColor: isDark ? '#0F172A' : '#FFFFFF', isDarkPreferred: isDark };
-      case 'productivity':
-        return { primaryColor: '#6366F1', secondaryColor: '#8B5CF6', backgroundColor: isDark ? '#090D16' : '#FFFFFF', isDarkPreferred: isDark };
-      default:
-        return { primaryColor: '#3B82F6', secondaryColor: '#8B5CF6', backgroundColor: isDark ? '#0F172A' : '#FFFFFF', isDarkPreferred: isDark };
-    }
+    // Brand palette for every domain (matches the product theme):
+    // teal #02AFB9 primary · coral #F07067 secondary · cream #FBFADD page ·
+    // deep blue #0381A8 depth · deep-sea #0A3542 dark page.
+    return { primaryColor: '#02AFB9', secondaryColor: '#F07067', backgroundColor: isDark ? '#0A3542' : '#FBFADD', isDarkPreferred: isDark };
   }
 
-  private static planSchema(domain: string, prompt: string): DatabaseSchemaPlan {
+  private static planSchema(domain: string): DatabaseSchemaPlan {
     const tables: TableDefinition[] = [];
 
     // Common profiles table for Supabase Auth
@@ -397,6 +402,7 @@ export class AgentPlanner {
           { name: 'Users can update their own posts', table: 'posts', action: 'UPDATE', usingExpression: 'auth.uid() = user_id' },
           { name: 'Users can delete their own posts', table: 'posts', action: 'DELETE', usingExpression: 'auth.uid() = user_id' },
         ],
+        enableRLS: true,
         enableRealtime: true,
       });
     } else if (domain === 'booking') {
@@ -558,7 +564,7 @@ export class AgentPlanner {
     return services;
   }
 
-  private static planScreens(domain: string, lower: string): ScreenPlan[] {
+  private static planScreens(domain: string): ScreenPlan[] {
     const screens: ScreenPlan[] = [
       {
         name: 'SplashScreen',

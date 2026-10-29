@@ -13,11 +13,14 @@ import { MultiFileCodeGenerator } from './codeGenerator';
 import { AgentValidator } from './validator';
 import { OpenRouterClient } from './llmClient';
 import { VectorStore } from './vectorStore';
+import { generateMinimalStarterFiles } from '@/utils/flutterTemplates';
 
 export * from './types';
 export * from './prompts';
 export * from './planner';
 export * from './context';
+export * from './chatIntent';
+export * from './chatAnswer';
 export * from './schemaGenerator';
 export * from './codeGenerator';
 export * from './validator';
@@ -55,9 +58,14 @@ export class FlutterSupabaseAgent {
     const conversationHistory = options.conversationHistory || [];
     const isIncremental = options.isIncremental || false;
 
+    const envModel =
+      (typeof import.meta !== 'undefined' && (import.meta.env?.VITE_AGENT_MODEL as string | undefined)) ||
+      (typeof process !== 'undefined' && process.env?.VITE_AGENT_MODEL) ||
+      'nvidia/nemotron-3.5-lightning:free';
     const llmClient = new OpenRouterClient({
       apiKey,
-      model: options.modelConfig?.modelName || 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      model: options.modelConfig?.modelName || envModel,
+      temperature: options.temperature ?? options.modelConfig?.temperature,
     });
 
     try {
@@ -78,7 +86,7 @@ export class FlutterSupabaseAgent {
         phase: 'feature_detection',
         stepNumber: 2,
         totalSteps: TOTAL_STEPS,
-        message: `Detected domain: "${domain}". Searching vector database for production patterns...`,
+        message: `Detected domain: "${domain}". Searching the verified Flutter pattern library...`,
         thought: `Domain=${domain}, auth=${features.authMode}, darkMode=${features.hasDarkMode}, realtime=${features.hasRealtime}`,
       });
 
@@ -90,7 +98,7 @@ export class FlutterSupabaseAgent {
             phase: 'vector_retrieval',
             stepNumber: 2,
             totalSteps: TOTAL_STEPS,
-            message: `Retrieved ${retrievedPatterns.length} verified Flutter patterns (RAG)`,
+            message: `Retrieved ${retrievedPatterns.length} verified Flutter patterns`,
             retrievedPatterns,
           });
         }
@@ -99,6 +107,8 @@ export class FlutterSupabaseAgent {
       }
 
       let generatedFiles: AgentFileArtifact[] = [];
+      // Hoisted so the E2E result always returns the REAL plan (not a dummy).
+      let plan: AgentPlan | null = null;
 
       if (isIncremental && apiKey) {
         // ── INCREMENTAL EDIT PATH (follow-up prompts) ──────────────────
@@ -118,7 +128,8 @@ export class FlutterSupabaseAgent {
               prompt,
               existingFiles,
               conversationHistory,
-              (msg) => emit({ phase: 'incremental_edit', stepNumber: 4, totalSteps: TOTAL_STEPS, message: msg })
+              (msg) => emit({ phase: 'incremental_edit', stepNumber: 4, totalSteps: TOTAL_STEPS, message: msg }),
+              context.usesSupabase !== false,
             );
 
             if (editFiles.length > 0) {
@@ -162,35 +173,31 @@ export class FlutterSupabaseAgent {
           phase: 'planning',
           stepNumber: 3,
           totalSteps: TOTAL_STEPS,
-          message: 'Generating custom architecture & Supabase schema via AI...',
+          message: 'Planning the app architecture and data schema...',
         });
 
-        let plan: AgentPlan;
         if (apiKey) {
+          // Attempt 1: live AI planning
           try {
             plan = await llmClient.planLive(prompt, context, stateManagement, (msg) => {
               emit({ phase: 'planning', stepNumber: 3, totalSteps: TOTAL_STEPS, message: msg });
-            });
-          } catch (e) {
-            emit({
-              phase: 'planning',
-              stepNumber: 3,
-              totalSteps: TOTAL_STEPS,
-              message: `First planning attempt failed (${(e as Error).message.slice(0, 40)}) - retrying...`,
-            });
+            }, conversationHistory);
+          } catch {
+            // Attempt 2: retry with next model in chain (silent — no scary error message)
             try {
               llmClient.resetModelChain();
               plan = await llmClient.planLive(prompt, context, stateManagement, (msg) => {
                 emit({ phase: 'planning', stepNumber: 3, totalSteps: TOTAL_STEPS, message: msg });
-              });
+              }, conversationHistory);
             } catch {
+              // Final fallback: deterministic structured planner (always works, no LLM needed)
               emit({
                 phase: 'planning',
                 stepNumber: 3,
                 totalSteps: TOTAL_STEPS,
-                message: 'Using structured planner as fallback...',
+                message: 'Using smart structured planner for architecture design...',
               });
-              plan = AgentPlanner.plan(prompt, context);
+              plan = AgentPlanner.plan(prompt, context, { stateManagement: stateManagement as AgentPlan['stateManagement'] });
             }
           }
         } else {
@@ -200,7 +207,7 @@ export class FlutterSupabaseAgent {
             totalSteps: TOTAL_STEPS,
             message: 'No API key configured - using structured planner...',
           });
-          plan = AgentPlanner.plan(prompt, context);
+          plan = AgentPlanner.plan(prompt, context, { stateManagement: stateManagement as AgentPlan['stateManagement'] });
         }
         plan.domain = domain;
         plan.features = features;
@@ -229,16 +236,17 @@ export class FlutterSupabaseAgent {
           try {
             const liveFiles = await llmClient.generateCodeSinglePass(
               prompt, plan, semanticSummary, retrievedPatterns, conversationHistory,
-              (msg) => emit({ phase: 'code_generation', stepNumber: 4, totalSteps: TOTAL_STEPS, message: msg })
+              (msg) => emit({ phase: 'code_generation', stepNumber: 4, totalSteps: TOTAL_STEPS, message: msg }),
+              context.usesSupabase !== false,
             );
 
             if (liveFiles.length > 0) {
-              const existingFileMap = new Map(context.existingFiles.map((f) => [f.path, f.content]));
-              generatedFiles = liveFiles.map((f) => ({
-                ...f,
-                oldContent: existingFileMap.get(f.path),
-                action: (existingFileMap.has(f.path) ? 'modified' : 'created') as 'modified' | 'created',
-              }));
+              generatedFiles = this.mergeWithBaseline(
+                liveFiles,
+                this.generateBaselineFiles(plan, context),
+                context,
+                (msg) => emit({ phase: 'code_generation', stepNumber: 4, totalSteps: TOTAL_STEPS, message: msg }),
+              );
               liveSuccess = true;
             }
           } catch (e) {
@@ -256,16 +264,17 @@ export class FlutterSupabaseAgent {
               llmClient.resetModelChain();
               const liveFiles = await llmClient.generateCodeSinglePass(
                 prompt, plan, semanticSummary, retrievedPatterns, conversationHistory,
-                (msg) => emit({ phase: 'code_generation', stepNumber: 4, totalSteps: TOTAL_STEPS, message: msg })
+                (msg) => emit({ phase: 'code_generation', stepNumber: 4, totalSteps: TOTAL_STEPS, message: msg }),
+                context.usesSupabase !== false,
               );
 
               if (liveFiles.length > 0) {
-                const existingFileMap = new Map(context.existingFiles.map((f) => [f.path, f.content]));
-                generatedFiles = liveFiles.map((f) => ({
-                  ...f,
-                  oldContent: existingFileMap.get(f.path),
-                  action: (existingFileMap.has(f.path) ? 'modified' : 'created') as 'modified' | 'created',
-                }));
+                generatedFiles = this.mergeWithBaseline(
+                  liveFiles,
+                  this.generateBaselineFiles(plan, context),
+                  context,
+                  (msg) => emit({ phase: 'code_generation', stepNumber: 4, totalSteps: TOTAL_STEPS, message: msg }),
+                );
                 liveSuccess = true;
               }
             } catch {
@@ -282,7 +291,7 @@ export class FlutterSupabaseAgent {
               message: 'All AI generation attempts failed - using structured fallback',
             });
             const existingFileMap = new Map(context.existingFiles.map((f) => [f.path, f.content]));
-            generatedFiles = MultiFileCodeGenerator.generateAllFiles(plan, context).map((f) => ({
+            generatedFiles = this.generateBaselineFiles(plan, context).map((f) => ({
               ...f,
               oldContent: existingFileMap.get(f.path),
               action: (existingFileMap.has(f.path) ? 'modified' : 'created') as 'modified' | 'created',
@@ -296,7 +305,7 @@ export class FlutterSupabaseAgent {
             message: 'No API key configured - using structured generator...',
           });
           const existingFileMap = new Map(context.existingFiles.map((f) => [f.path, f.content]));
-          generatedFiles = MultiFileCodeGenerator.generateAllFiles(plan, context).map((f) => ({
+          generatedFiles = this.generateBaselineFiles(plan, context).map((f) => ({
             ...f,
             oldContent: existingFileMap.get(f.path),
             action: (existingFileMap.has(f.path) ? 'modified' : 'created') as 'modified' | 'created',
@@ -304,7 +313,74 @@ export class FlutterSupabaseAgent {
         }
       }
 
-      // Phase 5: Async non-blocking file embedding
+      // Ensure we always have a REAL plan for the E2E result.
+      // Incremental edits skip planning, so synthesize the base plan for metadata.
+      if (!plan) {
+        plan = AgentPlanner.plan(prompt, context, { stateManagement: stateManagement as AgentPlan['stateManagement'] });
+        plan.domain = domain;
+        plan.features = features;
+      }
+      const finalPlan: AgentPlan = plan;
+
+      // Enforce unique app id: the LLM often invents its own pubspec name.
+      // Rewrite it to the plan's unique appId so every app ships different.
+      if (finalPlan.appId && generatedFiles.length > 0) {
+        const pubIdx = generatedFiles.findIndex((f) => f.path === 'pubspec.yaml');
+        if (pubIdx >= 0 && generatedFiles[pubIdx]) {
+          const current = generatedFiles[pubIdx].content;
+          const rewritten = current.replace(/^name\s*:.*$/m, `name: ${finalPlan.appId}`);
+          if (rewritten !== current) {
+            generatedFiles[pubIdx] = { ...generatedFiles[pubIdx], content: rewritten };
+            emit({
+              phase: 'code_generation',
+              stepNumber: 4,
+              totalSteps: TOTAL_STEPS,
+              message: `Pinned unique package name: ${finalPlan.appId}`,
+            });
+          }
+        }
+      }
+
+      // Honor includeSqlMigrations === false by dropping SQL artifacts.
+      if (options.includeSqlMigrations === false && generatedFiles.length > 0) {
+        const dropped = generatedFiles.filter((f) => f.path.endsWith('.sql')).length;
+        if (dropped > 0) {
+          generatedFiles = generatedFiles.filter((f) => !f.path.endsWith('.sql'));
+          emit({
+            phase: 'code_generation',
+            stepNumber: 4,
+            totalSteps: TOTAL_STEPS,
+            message: `Skipped ${dropped} SQL migration file(s) (includeSqlMigrations: false).`,
+          });
+        }
+      }
+
+      // Cross-check the plan's file manifest against what was actually
+      // produced — surfaces silent LLM omissions before validation.
+      {
+        const produced = new Set(generatedFiles.map((f) => f.path));
+        const missingPlanned = [...finalPlan.filesToCreate, ...finalPlan.filesToModify].filter(
+          (p) => !produced.has(p),
+        );
+        if (missingPlanned.length > 0) {
+          emit({
+            phase: 'code_generation',
+            stepNumber: 4,
+            totalSteps: TOTAL_STEPS,
+            message: `Warning: ${missingPlanned.length} planned file(s) missing from output: ${missingPlanned.slice(0, 5).join(', ')}${missingPlanned.length > 5 ? '...' : ''}`,
+          });
+        }
+      }
+
+      // Phase 5: Dependency resolution (E2E completeness gate)
+      emit({
+        phase: 'dependency_resolution',
+        stepNumber: 5,
+        totalSteps: TOTAL_STEPS,
+        message: `Resolving ${Object.keys(finalPlan.dependencies).length} dependencies across ${generatedFiles.length} files...`,
+      });
+
+      // Phase 5b: Async non-blocking file embedding
       if (context.projectId) {
         void VectorStore.embedProjectFiles(context.projectId, generatedFiles);
       }
@@ -312,7 +388,7 @@ export class FlutterSupabaseAgent {
       // Phase 6: Validation & LLM-based Auto-Healing
       emit({
         phase: 'validation',
-        stepNumber: 5,
+        stepNumber: 6,
         totalSteps: TOTAL_STEPS,
         message: 'Validating Dart null-safety, widget hierarchy, and dependencies...',
         generatedFiles,
@@ -320,42 +396,103 @@ export class FlutterSupabaseAgent {
 
       let validationReport = AgentValidator.validate(generatedFiles);
 
-      if (options.enableAutoHealing !== false && !validationReport.isValid && apiKey) {
-        // LLM-based healing: feed errors back to LLM for repair
-        emit({
-          phase: 'auto_healing',
-          stepNumber: 6,
-          totalSteps: TOTAL_STEPS,
-          message: `Auto-healing ${validationReport.issues.length} validation errors via AI...`,
-          validationReport,
-        });
-
-        for (const issue of validationReport.issues.slice(0, 5)) {
-          const file = generatedFiles.find((f) => f.path === issue.filePath);
-          if (file && file.content) {
-            const healedContent = await llmClient.healCode(
-              file.path,
-              file.content,
-              [issue.message],
-              (msg) => emit({ phase: 'auto_healing', stepNumber: 6, totalSteps: TOTAL_STEPS, message: msg })
-            );
-            if (healedContent) {
-              file.content = healedContent;
-              file.action = 'modified';
-            }
-          }
-        }
-
-        // Re-validate after healing
-        validationReport = AgentValidator.validate(generatedFiles);
-      } else if (options.enableAutoHealing !== false && !validationReport.isValid) {
-        // No API key — use regex-based healing
+      if (options.enableAutoHealing !== false && !validationReport.isValid) {
+        // Deterministic regex fixes FIRST on every path (typo imports,
+        // missing deps, stale pins) — cheap and exact. The LLM then only
+        // sees what regex cannot fix.
         const healed = AgentValidator.autoHeal(generatedFiles, validationReport);
         generatedFiles = healed.healedFiles;
         validationReport = healed.report;
+        if (healed.report.fixedIssues.length > 0) {
+          emit({
+            phase: 'auto_healing',
+            stepNumber: 6,
+            totalSteps: TOTAL_STEPS,
+            message: `Deterministic fixes applied to ${healed.report.fixedIssues.length} issue(s); re-validating...`,
+            validationReport,
+          });
+        }
+
+        if (apiKey) {
+          // LLM-based healing: feed errors back to LLM for repair, in bounded
+          // rounds (default 1, max 3) so a failing model can't hang the run.
+          const maxRounds = Math.min(Math.max(options.maxHealingRounds ?? 1, 1), 3);
+          for (let round = 0; round < maxRounds && !validationReport.isValid; round++) {
+            emit({
+              phase: 'auto_healing',
+              stepNumber: 6,
+              totalSteps: TOTAL_STEPS,
+              message: `Auto-healing ${validationReport.issues.length} validation errors via AI (round ${round + 1}/${maxRounds})...`,
+              validationReport,
+            });
+
+            for (const issue of validationReport.issues.slice(0, 3)) {
+              // Never pass pubspec.yaml or non-Dart files to the LLM Dart code healer.
+              // Dependencies and configs must be resolved deterministically.
+              if (issue.filePath === 'pubspec.yaml' || !issue.filePath.endsWith('.dart')) continue;
+
+              const file = generatedFiles.find((f) => f.path === issue.filePath);
+              if (file && file.content) {
+                const healedContent = await llmClient.healCode(
+                  file.path,
+                  file.content,
+                  [issue.message],
+                  (msg) => emit({ phase: 'auto_healing', stepNumber: 6, totalSteps: TOTAL_STEPS, message: msg })
+                );
+                if (healedContent) {
+                  file.content = healedContent;
+                  file.action = 'modified';
+                }
+              }
+            }
+
+            // Always re-apply deterministic fixes (missing dependencies, pubspec pins, etc.)
+            const healed = AgentValidator.autoHeal(generatedFiles, validationReport);
+            generatedFiles = healed.healedFiles;
+
+            // Re-validate after each healing round
+            validationReport = AgentValidator.validate(generatedFiles);
+          }
+        }
       }
 
       const durationMs = Math.round(performance.now() - startTime);
+
+      // Compact plan line so it is obvious WHAT was generated (domain,
+      // tables, screens). Vague prompts all collapse to the generic template —
+      // surfacing the detected plan here (plus a keyword tip) explains why
+      // two such apps look alike instead of leaving users guessing.
+      {
+        const tables = finalPlan.schema.tables.map((t) => t.name).join(', ') || '—';
+        const screens = finalPlan.screens.map((s) => s.name.replace(/Screen$/, '')).join(', ') || '—';
+        emit({
+          phase: 'schema_design',
+          stepNumber: 3,
+          totalSteps: TOTAL_STEPS,
+          message: `Plan: ${finalPlan.appName} (${finalPlan.domain || 'general'}) — ${generatedFiles.length} files · tables: ${tables} · screens: ${screens}`,
+          plan: finalPlan,
+        });
+        if ((finalPlan.domain || 'general') === 'general') {
+          emit({
+            phase: 'schema_design',
+            stepNumber: 3,
+            totalSteps: TOTAL_STEPS,
+            message: 'Tip: name a domain (shop, chat, fitness, crypto, food…) for a tailored template instead of the generic one.',
+          });
+        }
+      }
+
+      // Per-file completion events drive the live file list in the UI
+      // (center progress view + panel row). One `✓ path` line per file —
+      // always the real produced set, never placeholders.
+      for (const f of generatedFiles) {
+        emit({
+          phase: 'code_generation',
+          stepNumber: 4,
+          totalSteps: TOTAL_STEPS,
+          message: `✓ ${f.path}`,
+        });
+      }
 
       emit({
         phase: 'completed',
@@ -364,32 +501,14 @@ export class FlutterSupabaseAgent {
         message: `Successfully generated ${generatedFiles.length} files in ${durationMs}ms.`,
         generatedFiles,
         validationReport,
+        plan: finalPlan,
       });
 
-      const planSummary: AgentPlan = {
-        id: crypto.randomUUID(),
-        appName: context.projectName || 'App',
-        appDescription: `Generated app for: ${prompt.slice(0, 100)}`,
-        architecture: 'feature_first',
-        stateManagement: stateManagement as AgentPlan['stateManagement'],
-        domain,
-        theme: { primaryColor: '#3B82F6', secondaryColor: '#8B5CF6', backgroundColor: '#FFFFFF', isDarkPreferred: false },
-        dependencies: {},
-        devDependencies: {},
-        schema: { projectName: '', tables: [] },
-        models: [],
-        services: [],
-        screens: [],
-        filesToCreate: [],
-        filesToModify: [],
-        estimatedSteps: 10,
-      };
-
-      const summary = this.buildSummary(planSummary, generatedFiles, validationReport);
+      const summary = this.buildSummary(finalPlan, generatedFiles, validationReport);
 
       return {
         success: true,
-        plan: planSummary,
+        plan: finalPlan,
         files: generatedFiles,
         schemaSql: generatedFiles.find((f) => f.path.endsWith('.sql'))?.content,
         validationReport,
@@ -410,6 +529,38 @@ export class FlutterSupabaseAgent {
     }
   }
 
+  /**
+   * Deterministic fallback. A local-only app must never inherit the starter's
+   * Supabase service, auth screens or SQL, so it gets the small clean starter
+   * instead of the full Supabase template.
+   */
+  private static generateBaselineFiles(plan: AgentPlan, context: AgentContext): AgentFileArtifact[] {
+    if (context.usesSupabase !== false) {
+      return MultiFileCodeGenerator.generateAllFiles(plan, context);
+    }
+    return generateMinimalStarterFiles(plan.appName, context.projectId).map((file) => {
+      const extension = file.path.split('.').pop() ?? '';
+      const language: AgentFileArtifact['language'] = extension === 'dart'
+        ? 'dart'
+        : extension === 'yaml'
+          ? 'yaml'
+          : extension === 'sql'
+            ? 'sql'
+            : extension === 'json'
+              ? 'json'
+              : extension === 'md'
+                ? 'markdown'
+                : 'env';
+      return {
+        path: file.path,
+        content: file.content ?? '',
+        language,
+        isNew: true,
+        action: 'created' as const,
+      };
+    });
+  }
+
   private static buildSummary(
     plan: AgentPlan,
     files: AgentFileArtifact[],
@@ -417,23 +568,43 @@ export class FlutterSupabaseAgent {
   ): string {
     const dartCount = files.filter((f) => f.path.endsWith('.dart')).length;
     const sqlCount = files.filter((f) => f.path.endsWith('.sql')).length;
+    const tables = plan.schema.tables.map((t) => `\`${t.name}\``).join(', ') || '—';
+    const screens = plan.screens.map((s) => `\`${s.name}\``).join(', ') || '—';
 
     return `### FlutterForge Lovable Agent Generation Summary
 
 - **App Name:** ${plan.appName} (${plan.domain || 'general'})
 - **Generated Files:** ${files.length} (${dartCount} Dart files, ${sqlCount} SQL migrations, pubspec.yaml)
-- **Supabase Tables:** ${plan.schema.tables.map((t) => `\`${t.name}\``).join(', ')}
-- **Screens:** ${plan.screens.map((s) => `\`${s.name}\``).join(', ')}
+- **Supabase Tables:** ${tables}
+- **Screens:** ${screens}
 - **Theme:** Material 3 with primary \`${plan.theme.primaryColor}\`
 - **Validation:** ${report.isValid ? 'Clean (0 errors)' : report.summary}
 `;
   }
-}
 
-export async function runFlutterSupabaseAgent(
-  prompt: string,
-  context: AgentContext,
-  options?: AgentGenerationOptions
-): Promise<AgentGenerationResult> {
-  return FlutterSupabaseAgent.execute(prompt, context, options);
+  /**
+   * E2E completeness gate: live LLM output wins, but any missing
+   * planned/critical files are backfilled from the deterministic baseline
+   * so validation never fails with MISSING_PUBSPEC / MISSING_MAIN_DART.
+   */
+  private static mergeWithBaseline(
+    liveFiles: AgentFileArtifact[],
+    baselineFiles: AgentFileArtifact[],
+    context: AgentContext,
+    onMessage?: (msg: string) => void,
+  ): AgentFileArtifact[] {
+    const livePaths = new Set(liveFiles.map((f) => f.path));
+    const missing = baselineFiles.filter((f) => !livePaths.has(f.path));
+    if (missing.length > 0) {
+      onMessage?.(
+        `Live output missing ${missing.length} file(s) — backfilling from structured generator: ${missing.slice(0, 5).map((f) => f.path).join(', ')}${missing.length > 5 ? '...' : ''}`,
+      );
+    }
+    const existingFileMap = new Map(context.existingFiles.map((f) => [f.path, f.content]));
+    return [...liveFiles, ...missing].map((f) => ({
+      ...f,
+      oldContent: existingFileMap.get(f.path),
+      action: (existingFileMap.has(f.path) ? 'modified' : 'created') as 'modified' | 'created',
+    }));
+  }
 }

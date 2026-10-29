@@ -9,26 +9,31 @@ interface ThemeState {
 }
 
 function getInitialTheme(): Theme {
-  if (typeof window === 'undefined') return 'dark';
+  if (typeof window === 'undefined') return 'light';
   const saved = localStorage.getItem('ff-theme') as Theme | null;
   if (saved === 'light' || saved === 'dark') return saved;
-  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  return prefersDark ? 'dark' : 'dark'; // default dark to match current design
+  // Studio is a light-first product; the theme toggle still offers dark.
+  return 'light';
+}
+
+function applyThemeToDom(theme: Theme) {
+  localStorage.setItem('ff-theme', theme);
+  document.documentElement.setAttribute('data-theme', theme);
+  document.documentElement.style.colorScheme = theme;
+  // Tailwind `dark:` variant (class strategy) + generic `.light` hooks.
+  if (theme === 'dark') {
+    document.documentElement.classList.add('dark');
+    document.documentElement.classList.remove('light');
+  } else {
+    document.documentElement.classList.add('light');
+    document.documentElement.classList.remove('dark');
+  }
 }
 
 export const useThemeStore = create<ThemeState>((set, get) => ({
   theme: getInitialTheme(),
   setTheme: (theme) => {
-    localStorage.setItem('ff-theme', theme);
-    document.documentElement.setAttribute('data-theme', theme);
-    // also set class for tailwind dark mode if needed
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-      document.documentElement.classList.remove('light');
-    } else {
-      document.documentElement.classList.add('light');
-      document.documentElement.classList.remove('dark');
-    }
+    applyThemeToDom(theme);
     set({ theme });
   },
   toggle: () => {
@@ -39,7 +44,5 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
 
 // Initialize on load
 if (typeof window !== 'undefined') {
-  const initial = getInitialTheme();
-  document.documentElement.setAttribute('data-theme', initial);
-  document.documentElement.classList.add(initial);
+  applyThemeToDom(getInitialTheme());
 }

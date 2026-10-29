@@ -1,10 +1,11 @@
-import { Settings as SettingsIcon, Save } from 'lucide-react';
-import { useState } from 'react';
+import { Settings as SettingsIcon, Save, Cpu, RefreshCw } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useProjectStore } from '@/stores/project.store';
 import { toast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
+import { getHarnessCapabilities, type HarnessCapabilities } from '@/agent/harnessClient';
 
 export function SettingsView() {
   const { currentProject, updateProject } = useProjectStore();
@@ -14,11 +15,23 @@ export function SettingsView() {
   const [stateManagement, setStateManagement] = useState(currentProject?.state_management ?? 'provider');
   const [themeMode, setThemeMode] = useState(currentProject?.theme_mode ?? 'light');
   const [platform, setPlatform] = useState(currentProject?.platform ?? 'web');
+  const [caps, setCaps] = useState<HarnessCapabilities | null>(null);
+  const [checkingEngine, setCheckingEngine] = useState(false);
+
+  async function refreshEngine() {
+    setCheckingEngine(true);
+    setCaps(await getHarnessCapabilities());
+    setCheckingEngine(false);
+  }
+
+  useEffect(() => {
+    void refreshEngine();
+  }, []);
 
   if (!currentProject) return null;
 
   async function handleSave() {
-    await updateProject(currentProject!.id, {
+    const saved = await updateProject(currentProject!.id, {
       name,
       description,
       flutter_version: flutterVersion,
@@ -26,7 +39,8 @@ export function SettingsView() {
       theme_mode: themeMode,
       platform,
     });
-    toast('success', 'Settings saved');
+    if (saved) toast('success', 'Settings saved');
+    else toast('error', useProjectStore.getState().error ?? 'Could not save settings.');
   }
 
   return (
@@ -34,7 +48,7 @@ export function SettingsView() {
       <div className="max-w-2xl mx-auto w-full p-6 space-y-6">
         <div className="flex items-center gap-2">
           <SettingsIcon size={18} className="text-[var(--ff-primary)]" />
-          <h2 className="text-lg font-semibold text-white">Project Settings</h2>
+          <h2 className="text-lg font-semibold text-[var(--ff-text)]">Project Settings</h2>
         </div>
 
         <div className="space-y-4">
@@ -78,21 +92,79 @@ export function SettingsView() {
               <label className="block text-sm font-medium text-[var(--ff-text-muted)] mb-1.5">Platform</label>
               <select className="ff-input w-full px-3 py-2.5 text-sm" value={platform} onChange={(e) => setPlatform(e.target.value)}>
                 <option value="web">Web</option>
-                <option value="mobile">Mobile</option>
-                <option value="desktop">Desktop</option>
+                <option value="mobile">Mobile (iOS + Android)</option>
+                <option value="desktop">Desktop (macOS + Windows)</option>
+                <option value="macos">macOS only</option>
+                <option value="windows">Windows only</option>
               </select>
             </div>
           </div>
 
-          <div className="ff-card p-3 flex items-center justify-between">
-            <div>
+          <div className="ff-card p-3 flex items-center justify-between gap-2">
+            <div className="min-w-0">
               <p className="text-xs text-[var(--ff-text-dim)]">Project ID</p>
-              <p className="text-xs text-[var(--ff-text-muted)] font-mono">{currentProject.id}</p>
+              <p className="text-xs text-[var(--ff-text-muted)] font-mono truncate">{currentProject.id}</p>
             </div>
-            <Badge variant="info">{currentProject.template}</Badge>
+            <Badge variant="info" className="shrink-0">{currentProject.template}</Badge>
           </div>
 
           <Button icon={<Save size={14} />} onClick={handleSave}>Save Settings</Button>
+
+          <div className="ff-card p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Cpu size={15} className="text-[var(--ff-primary)]" />
+                <h3 className="text-sm font-semibold text-[var(--ff-text)]">DeepSeek Harness Engine</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant={caps?.runtime.available ? 'success' : caps ? 'warning' : 'info'}>
+                  {caps?.runtime.available ? 'Connected' : caps ? 'Unavailable' : 'Checking…'}
+                </Badge>
+                <button
+                  onClick={() => void refreshEngine()}
+                  className="p-1 rounded text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] hover:bg-white/5 transition-colors"
+                  title="Re-check the engine"
+                  aria-label="Re-check the engine"
+                >
+                  <RefreshCw size={13} className={checkingEngine ? 'animate-spin' : ''} />
+                </button>
+              </div>
+            </div>
+
+            {caps ? (
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                <div>
+                  <dt className="text-[var(--ff-text-dim)]">Runtime</dt>
+                  <dd className="text-[var(--ff-text-muted)] font-mono">{caps.runtime.version || 'not found'}</dd>
+                </div>
+                <div>
+                  <dt className="text-[var(--ff-text-dim)]">Profile</dt>
+                  <dd className="text-[var(--ff-text-muted)] font-mono">{caps.profile.name}{caps.profile.installed ? '' : ' (auto-provisions on first run)'}</dd>
+                </div>
+                <div>
+                  <dt className="text-[var(--ff-text-dim)]">Route</dt>
+                  <dd className="text-[var(--ff-text-muted)] font-mono break-all">{caps.route.provider} · {caps.route.model}</dd>
+                </div>
+                <div>
+                  <dt className="text-[var(--ff-text-dim)]">Flutter SDK</dt>
+                  <dd className="text-[var(--ff-text-muted)] font-mono">{caps.flutter.version || 'not found'}</dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-[var(--ff-text-dim)]">Desktop shell</dt>
+                  <dd className="text-[var(--ff-text-muted)]">
+                    {window.flutterforgeDesktop?.isDesktop
+                      ? `Electron on ${window.flutterforgeDesktop.platform} (${window.flutterforgeDesktop.arch})`
+                      : 'Browser (run npm run dev:desktop for the macOS/Windows app)'}
+                  </dd>
+                </div>
+              </dl>
+            ) : (
+              <p className="text-xs text-[var(--ff-text-muted)]">
+                The local engine is not reachable. Start it with <span className="font-mono">npm run server</span>,
+                or use <span className="font-mono">npm run dev:desktop</span> so Electron starts it automatically.
+              </p>
+            )}
+          </div>
         </div>
       </div>
     </div>

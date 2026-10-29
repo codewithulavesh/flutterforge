@@ -1,22 +1,12 @@
-import { History, Plus, RotateCcw, Check } from 'lucide-react';
+import { History, Plus, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
 import { useProjectStore } from '@/stores/project.store';
 import { toast } from '@/components/ui/Toast';
+import { timeAgo } from '@/utils/time';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { Badge } from '@/components/ui/Badge';
-
-function timeAgo(date: string): string {
-  const diff = Date.now() - new Date(date).getTime();
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(hours / 24);
-  if (days > 0) return `${days}d ago`;
-  if (hours > 0) return `${hours}h ago`;
-  const mins = Math.floor(diff / 60000);
-  if (mins > 0) return `${mins}m ago`;
-  return 'just now';
-}
 
 export function VersionsView() {
   const { versions, currentProject, createVersion, restoreVersion } = useProjectStore();
@@ -26,7 +16,11 @@ export function VersionsView() {
 
   async function handleCreate() {
     if (!currentProject || !label.trim()) return;
-    await createVersion(currentProject.id, label.trim(), description.trim());
+    const created = await createVersion(currentProject.id, label.trim(), description.trim());
+    if (!created) {
+      toast('error', useProjectStore.getState().error ?? 'Could not create the checkpoint.');
+      return;
+    }
     toast('success', 'Version checkpoint created');
     setCreateOpen(false);
     setLabel('');
@@ -36,8 +30,9 @@ export function VersionsView() {
   async function handleRestore(versionId: string) {
     if (!currentProject) return;
     if (!confirm('Restore this version? Current changes will be replaced.')) return;
-    await restoreVersion(currentProject.id, versionId);
-    toast('success', 'Version restored');
+    const restored = await restoreVersion(currentProject.id, versionId);
+    if (restored) toast('success', 'Version restored');
+    else toast('error', 'Could not restore this version.');
   }
 
   return (
@@ -46,7 +41,7 @@ export function VersionsView() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <History size={18} className="text-[var(--ff-primary)]" />
-            <h2 className="text-lg font-semibold text-white">Version History</h2>
+            <h2 className="text-lg font-semibold text-[var(--ff-text)]">Version History</h2>
           </div>
           <Button size="sm" icon={<Plus size={14} />} onClick={() => setCreateOpen(true)}>New Checkpoint</Button>
         </div>
@@ -61,18 +56,18 @@ export function VersionsView() {
           <div className="space-y-2">
             {versions.map((version, i) => (
               <div key={version.id} className="ff-card p-4 group">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start gap-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
                     <div className="w-8 h-8 rounded-lg bg-[var(--ff-primary)]/10 flex items-center justify-center shrink-0">
                       <span className="text-xs font-bold text-[var(--ff-primary)]">v{version.version_number}</span>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-white">{version.label ?? `Version ${version.version_number}`}</p>
+                        <p className="text-sm font-semibold text-[var(--ff-text)] truncate">{version.label ?? `Version ${version.version_number}`}</p>
                         {i === 0 && <Badge variant="info">Latest</Badge>}
                       </div>
                       {version.description && (
-                        <p className="text-xs text-[var(--ff-text-muted)] mt-1">{version.description}</p>
+                        <p className="text-xs text-[var(--ff-text-muted)] mt-1 break-words">{version.description}</p>
                       )}
                       <p className="text-[10px] text-[var(--ff-text-dim)] mt-1">
                         {timeAgo(version.created_at)} · {Object.keys(version.file_snapshot).length} files
@@ -81,8 +76,7 @@ export function VersionsView() {
                   </div>
                   <button
                     onClick={() => handleRestore(version.id)}
-                    className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs text-[var(--ff-text-muted)] hover:text-[var(--ff-primary)] hover:bg-[var(--ff-primary)]/10 transition-all"
-                  >
+                    className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs text-[var(--ff-text-muted)] hover:text-[var(--ff-primary)] hover:bg-[var(--ff-primary)]/10 transition-all shrink-0">
                     <RotateCcw size={12} />
                     Restore
                   </button>

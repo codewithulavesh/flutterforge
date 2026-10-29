@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
 import { X, Save } from 'lucide-react';
 import { useProjectStore } from '@/stores/project.store';
@@ -29,7 +29,7 @@ export function CodeEditor() {
           [/[A-Z]\w+/, 'type.identifier'],
           [/import|class|extends|implements|with|return|if|else|for|while|switch|case|break|continue|void|var|final|const|static|late|required|async|await|Future|Stream|Widget|BuildContext|StatelessWidget|StatefulWidget|State|override|get|set|new|try|catch|finally|throw|enum|typedef|abstract|factory|mixin/, 'keyword'],
           [/true|false|null|this|super/, 'keyword'],
-          [/[{}()\[\]]/, '@brackets'],
+          [/[{}()[\]]/, '@brackets'],
           [/[<>=!+\-*/%&|^~?:]/, 'operators'],
           [/\/\/.*$/, 'comment'],
           [/\/\*/, 'comment', '@comment'],
@@ -81,44 +81,53 @@ export function CodeEditor() {
     });
   };
 
-  async function handleSave() {
+  const handleSave = useCallback(async () => {
     if (!currentProject || !activeFile || !editorRef.current) return;
     const content = editorRef.current.getValue();
-    await saveFile(currentProject.id, activeFile, content);
-    toast('success', 'File saved');
-  }
+    const saved = await saveFile(currentProject.id, activeFile, content);
+    if (saved) toast('success', 'File saved');
+    else toast('warning', 'Saved locally only — backend unavailable, changes may not persist.');
+  }, [currentProject, activeFile, saveFile]);
+
+  useEffect(() => {
+    const onSave = () => { void handleSave(); };
+    window.addEventListener('ff:save-file', onSave);
+    return () => window.removeEventListener('ff:save-file', onSave);
+  }, [handleSave]);
 
   return (
     <div className="flex flex-col h-full bg-[var(--ff-bg)]">
-      {/* Tabs */}
-      <div className="flex items-center border-b border-[var(--ff-border)] bg-[var(--ff-surface)] overflow-x-auto ff-scrollbar shrink-0">
-        {openTabs.length === 0 && (
-          <div className="px-4 py-2 text-xs text-[var(--ff-text-dim)]">No files open</div>
-        )}
-        {openTabs.map((path) => (
-          <div
-            key={path}
-            onClick={() => openFile(path)}
-            className={cn(
-              'flex items-center gap-2 px-3 py-2 text-xs cursor-pointer border-r border-[var(--ff-border)] transition-colors group',
-              activeFile === path
-                ? 'bg-[var(--ff-bg)] text-white'
-                : 'text-[var(--ff-text-dim)] hover:text-[var(--ff-text-muted)]'
-            )}
-          >
-            <span className="truncate max-w-[160px]">{path.split('/').pop()}</span>
-            <button
-              onClick={(e) => { e.stopPropagation(); closeTab(path); }}
-              className="opacity-0 group-hover:opacity-100 hover:text-white transition-opacity"
+      {/* Tabs — Save lives outside the scrollable strip so it never scrolls away */}
+      <div className="flex items-stretch border-b border-[var(--ff-border)] bg-[var(--ff-surface)] shrink-0">
+        <div className="flex items-center flex-1 min-w-0 overflow-x-auto ff-scrollbar">
+          {openTabs.length === 0 && (
+            <div className="px-4 py-2 text-xs text-[var(--ff-text-dim)]">No files open</div>
+          )}
+          {openTabs.map((path) => (
+            <div
+              key={path}
+              onClick={() => openFile(path)}
+              className={cn(
+                'flex items-center gap-2 px-3 py-2 text-xs cursor-pointer border-r border-[var(--ff-border)] transition-colors group',
+                activeFile === path
+                  ? 'bg-[var(--ff-bg)] text-[var(--ff-text)]'
+                  : 'text-[var(--ff-text-dim)] hover:text-[var(--ff-text-muted)]'
+              )}
             >
-              <X size={12} />
-            </button>
-          </div>
-        ))}
+              <span className="truncate max-w-[160px]">{path.split('/').pop()}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); closeTab(path); }}
+                className="opacity-0 group-hover:opacity-100 hover:text-[var(--ff-text)] transition-opacity"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
         {activeFile && (
           <button
             onClick={handleSave}
-            className="ml-auto px-3 py-2 text-xs text-[var(--ff-text-muted)] hover:text-white flex items-center gap-1.5 shrink-0"
+            className="px-3 py-2 text-xs text-[var(--ff-text-muted)] hover:text-[var(--ff-text)] flex items-center gap-1.5 shrink-0 border-l border-[var(--ff-border)]"
           >
             <Save size={12} />
             Save

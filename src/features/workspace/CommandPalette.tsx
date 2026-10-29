@@ -5,6 +5,8 @@ import { Search } from 'lucide-react';
 import { useWorkspaceStore } from '@/stores/workspace.store';
 import { COMMAND_PALETTE_COMMANDS } from '@/utils/constants';
 import { toast } from '@/components/ui/Toast';
+import { useProjectStore } from '@/stores/project.store';
+import { usePreviewStore } from '@/stores/preview.store';
 import { cn } from '@/utils/cn';
 
 export function CommandPalette() {
@@ -25,13 +27,14 @@ export function CommandPalette() {
     cmd.label.toLowerCase().includes(query.toLowerCase())
   );
 
-  function handleSelect(id: string) {
+  async function handleSelect(id: string) {
     const cmd = COMMAND_PALETTE_COMMANDS.find((c) => c.id === id);
     if (!cmd) return;
 
     switch (id) {
       case 'open-file':
         setActiveView('files');
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent('ff:focus-file-search')), 100);
         break;
       case 'open-preview':
         setActiveView('preview');
@@ -42,24 +45,34 @@ export function CommandPalette() {
       case 'open-terminal':
         setActiveView('terminal');
         break;
-      case 'run-analyze':
-        toast('info', 'Running Flutter analyze...');
+      case 'build-preview': {
+        const { currentProject, files } = useProjectStore.getState();
+        if (!currentProject) {
+          toast('error', 'Open a project first.');
+          break;
+        }
+        try {
+          await usePreviewStore.getState().build(
+            currentProject.id,
+            files.filter((file) => !file.is_directory).map((file) => ({ path: file.path, content: file.content })),
+          );
+          setActiveView('preview');
+          toast('success', 'Preview build started.');
+        } catch (error) {
+          toast('error', error instanceof Error ? error.message : 'Preview build failed to start.');
+        }
         break;
-      case 'build-preview':
-        toast('info', 'Building preview...');
-        break;
+      }
       case 'add-dependency':
         setActiveView('dependencies');
         break;
       case 'create-screen':
         setActiveView('ai-builder');
-        toast('info', 'Ask the AI to create a screen');
-        break;
-      case 'create-component':
-        setActiveView('components');
-        break;
-      case 'change-theme':
-        setActiveView('theme');
+        window.setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('ff:prefill-composer', {
+            detail: { text: 'Create a new screen called ' },
+          }));
+        }, 100);
         break;
       case 'export-project':
         setActiveView('export');
@@ -93,7 +106,7 @@ export function CommandPalette() {
               if (e.key === 'Escape') setCommandPaletteOpen(false);
             }}
             placeholder="Type a command..."
-            className="flex-1 bg-transparent outline-none text-sm text-white placeholder:text-[var(--ff-text-dim)]"
+            className="flex-1 bg-transparent outline-none text-sm text-[var(--ff-text)] placeholder:text-[var(--ff-text-dim)]"
           />
           <kbd className="text-[10px] text-[var(--ff-text-dim)] px-1.5 py-0.5 rounded bg-[var(--ff-surface-2)] border border-[var(--ff-border)]">ESC</kbd>
         </div>

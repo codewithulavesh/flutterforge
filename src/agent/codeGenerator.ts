@@ -22,14 +22,16 @@ export class MultiFileCodeGenerator {
     // 2. Core architecture
     artifacts.push(this.generateAppConstants(plan, context));
     artifacts.push(this.generateAppTheme(plan));
+    artifacts.push(this.generateThemeController());
+    artifacts.push(this.generateThemeToggleButton());
     artifacts.push(this.generateAppRouter(plan));
     artifacts.push(this.generateFormatters());
 
     // 3. Reusable UI components
-    artifacts.push(this.generateCustomButton(plan));
-    artifacts.push(this.generateCustomTextField(plan));
-    artifacts.push(this.generateLoadingIndicator(plan));
-    artifacts.push(this.generateEmptyState(plan));
+    artifacts.push(this.generateCustomButton());
+    artifacts.push(this.generateCustomTextField());
+    artifacts.push(this.generateLoadingIndicator());
+    artifacts.push(this.generateEmptyState());
     artifacts.push(this.generateShimmerSkeleton());
 
     // 4. Data models
@@ -70,6 +72,36 @@ export class MultiFileCodeGenerator {
   }
 
   /**
+   * Resolves an artifact language from the fence tag, falling back to the
+   * file extension. Previously every non-dart/sql/yaml block was coerced to
+   * `dart`, misclassifying json/markdown/env artifacts downstream.
+   */
+  private static inferArtifactLanguage(
+    tag: string | undefined,
+    filePath: string,
+  ): AgentFileArtifact['language'] {
+    const t = (tag || '').toLowerCase();
+    const byTag: Record<string, AgentFileArtifact['language']> = {
+      dart: 'dart',
+      sql: 'sql',
+      yaml: 'yaml',
+      yml: 'yaml',
+      json: 'json',
+      markdown: 'markdown',
+      md: 'markdown',
+      env: 'env',
+    };
+    if (byTag[t]) return byTag[t];
+    if (filePath.endsWith('.dart')) return 'dart';
+    if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) return 'yaml';
+    if (filePath.endsWith('.sql')) return 'sql';
+    if (filePath.endsWith('.json')) return 'json';
+    if (filePath.endsWith('.md') || filePath.endsWith('.markdown')) return 'markdown';
+    if (filePath.endsWith('.env')) return 'env';
+    return 'dart';
+  }
+
+  /**
    * Parses LLM raw text output containing file codeblocks into AgentFileArtifact objects
    */
   public static parseLLMCodeArtifacts(rawText: string): AgentFileArtifact[] {
@@ -78,10 +110,29 @@ export class MultiFileCodeGenerator {
     const blockRegex = /```([a-zA-Z0-9_-]+)?(?:\s+filepath=["']([^"']+)["']|\s+file=["']([^"']+)["']|\s+path=["']([^"']+)["'])?([\s\S]*?)```/g;
 
     let match: RegExpExecArray | null;
+    let droppedBlocks = 0;
     while ((match = blockRegex.exec(rawText)) !== null) {
-      const language = (match[1] || 'dart').toLowerCase() as AgentFileArtifact['language'];
-      const filePath = match[2] || match[3] || match[4];
-      const content = match[5]?.trim();
+      const language = this.inferArtifactLanguage(match[1], match[2] || match[3] || match[4] || '');
+      const content = match[5]?.trim() ?? '';
+
+      // The prompt requires `filepath="..."` on every block, but models
+      // occasionally omit it. Silently dropping those blocks used to lose
+      // entire files (AppConstants/AppRouter/ThemeController) — the app then
+      // failed to compile with "Undefined name" errors. Infer the path from
+      // common leading-comment conventions before giving up on the block.
+      let filePath = match[2] || match[3] || match[4];
+      if (!filePath && content) {
+        const firstLine = content.split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
+        const candidates = [
+          firstLine.match(/^\/\/+\s*(?:filepath|path|file)[:=]?\s*([^\s]+)$/i),
+          firstLine.match(/^\/\/+\s*([\w./-]+\.(?:dart|yaml|yml|json|sql|md|html|css|txt))$/i),
+          firstLine.match(/^#\s*([\w./-]+\.(?:yaml|yml|sql|sh|md|txt))$/i),
+        ];
+        const inferred = candidates.find((c) => c?.[1])?.[1];
+        if (inferred && !inferred.includes(' ')) {
+          filePath = inferred.replace(/^\.?\//, '');
+        }
+      }
 
       if (filePath && content) {
         // Deduplicate: keep last occurrence if same path appears twice
@@ -91,7 +142,7 @@ export class MultiFileCodeGenerator {
             artifacts[existingIdx] = {
               path: filePath,
               content,
-              language: language === 'sql' ? 'sql' : language === 'yaml' ? 'yaml' : 'dart',
+              language,
               isNew: true,
             };
             continue;
@@ -101,10 +152,19 @@ export class MultiFileCodeGenerator {
         artifacts.push({
           path: filePath,
           content,
-          language: language === 'sql' ? 'sql' : language === 'yaml' ? 'yaml' : 'dart',
+          language,
           isNew: true,
         });
+      } else if (content) {
+        // A real code block with no recoverable path would be lost forever —
+        // surface it loudly instead of failing later with compile errors.
+        droppedBlocks++;
+        console.warn('[Parser] Dropped code block without a file path — first line:', content.split('\n')[0].slice(0, 80));
       }
+    }
+
+    if (droppedBlocks > 0) {
+      console.warn(`[Parser] ${droppedBlocks} code block(s) had no file path and were skipped.`);
     }
 
     // Detect truncation: if rawText ends mid-code-block (no closing ```)
@@ -123,13 +183,20 @@ export class MultiFileCodeGenerator {
   }
 
   private static generatePubspecYaml(plan: AgentPlan): AgentFileArtifact {
-    const content = `name: ${plan.appName.toLowerCase().replace(/[^a-z0-9_]/g, '_')}
+    const isRiverpod = plan.stateManagement === 'riverpod';
+    const stateDep = isRiverpod ? '  flutter_riverpod: ^2.5.1' : '  provider: ^6.1.2';
+    // Unique per app: falls back to a sanitized app name for legacy plans.
+    const packageName =
+      plan.appId || plan.appName.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    const content = `name: ${packageName}
 description: A production-grade Flutter application generated by FlutterForge Lovable Agent.
 publish_to: 'none'
 version: 1.0.0+1
+# Application ID: ${plan.applicationId || `com.flutterforge.${packageName}`}
+# iOS Bundle ID: ${plan.bundleId || `com.flutterforge.${packageName}`}
 
 environment:
-  sdk: '>=3.2.0 <4.0.0'
+  sdk: '>=3.4.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -137,8 +204,8 @@ dependencies:
   supabase_flutter: ^2.8.0
   go_router: ^14.6.2
   google_fonts: ^6.2.1
-  provider: ^6.1.2
-  intl: ^0.19.0
+${stateDep}
+  intl: ^0.20.3
   cached_network_image: ^3.4.1
   flutter_animate: ^4.5.0
   uuid: ^4.5.1
@@ -189,6 +256,9 @@ linter:
 
     const content = `class AppConstants {
   static const String appName = '${plan.appName}';
+  static const String appId = '${plan.appId || ''}';
+  static const String applicationId = '${plan.applicationId || ''}';
+  static const String bundleId = '${plan.bundleId || ''}';
   static const String supabaseUrl = String.fromEnvironment(
     'SUPABASE_URL',
     defaultValue: '${supabaseUrl}',
@@ -215,6 +285,15 @@ linter:
   private static generateAppTheme(plan: AgentPlan): AgentFileArtifact {
     const pColor = plan.theme.primaryColor.replace('#', '');
     const sColor = plan.theme.secondaryColor.replace('#', '');
+    // Brand-matched page backgrounds (plan-driven): cream in light mode,
+    // deep-sea in dark mode. Falls back to legacy neutrals on bad input.
+    const bgLight = /^([0-9A-Fa-f]{6})$/.test(plan.theme.backgroundColor.replace('#', ''))
+      && !plan.theme.isDarkPreferred
+      ? plan.theme.backgroundColor.replace('#', '')
+      : 'F8FAFC';
+    const bgDark = plan.theme.isDarkPreferred && /^([0-9A-Fa-f]{6})$/.test(plan.theme.backgroundColor.replace('#', ''))
+      ? plan.theme.backgroundColor.replace('#', '')
+      : '0F172A';
 
     const content = `import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -222,12 +301,12 @@ import 'package:google_fonts/google_fonts.dart';
 class AppTheme {
   static const Color primary = Color(0xFF${pColor});
   static const Color secondary = Color(0xFF${sColor});
-  static const Color backgroundLight = Color(0xFFF8FAFC);
+  static const Color backgroundLight = Color(0xFF${bgLight});
   static const Color surfaceLight = Colors.white;
-  static const Color textPrimaryLight = Color(0xFF0F172A);
-  static const Color textSecondaryLight = Color(0xFF64748B);
+  static const Color textPrimaryLight = Color(0xFF0B3542);
+  static const Color textSecondaryLight = Color(0xFF476771);
 
-  static const Color backgroundDark = Color(0xFF0F172A);
+  static const Color backgroundDark = Color(0xFF${bgDark});
   static const Color surfaceDark = Color(0xFF1E293B);
   static const Color textPrimaryDark = Color(0xFFF8FAFC);
   static const Color textSecondaryDark = Color(0xFF94A3B8);
@@ -258,7 +337,7 @@ class AppTheme {
           fontWeight: FontWeight.w700,
         ),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: surfaceLight,
         elevation: 0,
         shape: RoundedRectangleBorder(
@@ -295,7 +374,7 @@ class AppTheme {
           fontWeight: FontWeight.w700,
         ),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: surfaceDark,
         elevation: 0,
         shape: RoundedRectangleBorder(
@@ -316,16 +395,130 @@ class AppTheme {
     };
   }
 
+  /**
+   * Global theme state (light / dark / system) persisted with
+   * shared_preferences. Every generated app ships this so its theme
+   * toggle works from the first run — no setup required.
+   */
+  private static generateThemeController(): AgentFileArtifact {
+    const content = `import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// Global theme state: light / dark / system, persisted across restarts.
+class ThemeController extends ValueNotifier<ThemeMode> {
+  ThemeController._() : super(ThemeMode.system);
+
+  static final ThemeController instance = ThemeController._();
+
+  static const _prefsKey = 'ff_theme_mode';
+
+  Future<void> load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_prefsKey);
+      value = _decode(raw);
+    } catch (_) {
+      value = ThemeMode.system;
+    }
+  }
+
+  Future<void> setMode(ThemeMode mode) async {
+    value = mode;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsKey, mode.name);
+    } catch (_) {
+      // Persistence is best-effort — the in-memory mode still applies.
+    }
+  }
+
+  Future<void> toggleLightDark() async {
+    await setMode(value == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark);
+  }
+
+  static ThemeMode _decode(String? raw) {
+    switch (raw) {
+      case 'light':
+        return ThemeMode.light;
+      case 'dark':
+        return ThemeMode.dark;
+      case 'system':
+      default:
+        return ThemeMode.system;
+    }
+  }
+}
+`;
+    return {
+      path: 'lib/core/theme/theme_controller.dart',
+      content,
+      language: 'dart',
+      description: 'Persisted global ThemeMode state (light/dark/system)',
+      isNew: true,
+    };
+  }
+
+  /**
+   * AppBar-ready theme toggle button driven by [ThemeController].
+   * Sun in dark mode, moon in light mode, with a smooth icon crossfade.
+   */
+  private static generateThemeToggleButton(): AgentFileArtifact {
+    const content = `import 'package:flutter/material.dart';
+import '../theme/theme_controller.dart';
+
+/// AppBar-ready theme toggle: sun in dark mode, moon in light mode.
+/// Tap toggles light <-> dark. Use alongside the full Light/Dark/Auto
+/// selector on the Profile screen for complete theme control.
+class ThemeToggleButton extends StatelessWidget {
+  const ThemeToggleButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeController.instance,
+      builder: (context, mode, _) {
+        final isDark = mode == ThemeMode.dark ||
+            (mode == ThemeMode.system &&
+                MediaQuery.platformBrightnessOf(context) == Brightness.dark);
+        return IconButton(
+          tooltip: 'Toggle theme (currently ' + mode.name + ')',
+          icon: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            child: Icon(
+              isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+              key: ValueKey<bool>(isDark),
+            ),
+          ),
+          onPressed: () => ThemeController.instance.toggleLightDark(),
+        );
+      },
+    );
+  }
+}
+`;
+    return {
+      path: 'lib/core/widgets/theme_toggle_button.dart',
+      content,
+      language: 'dart',
+      description: 'Animated AppBar theme toggle button',
+      isNew: true,
+    };
+  }
+
   private static generateAppRouter(plan: AgentPlan): AgentFileArtifact {
     const imports: string[] = [];
     const routes: string[] = [];
 
     for (const s of plan.screens) {
       imports.push(`import '../../screens/${s.name.replace('Screen', '').toLowerCase()}/${this.toSnakeCase(s.name)}.dart';`);
+      // DetailScreen takes the route id param — every other screen is const.
+      const builder = s.routeName === 'detail'
+        ? `(context, state) => DetailScreen(itemId: state.pathParameters['id'],)`
+        : `(context, state) => const ${s.name}(),`;
       routes.push(`      GoRoute(
         path: '${s.routePath}',
         name: '${s.routeName}',
-        builder: (context, state) => const ${s.name}(),
+        builder: ${builder}
       ),`);
     }
 
@@ -356,7 +549,7 @@ ${routes.join('\n')}
 
 class Formatters {
   static String formatCurrency(double amount) {
-    return NumberFormat.currency(symbol: '\$', decimalDigits: 2).format(amount);
+    return NumberFormat.currency(symbol: '\\$', decimalDigits: 2).format(amount);
   }
 
   static String formatDate(DateTime? date) {
@@ -384,7 +577,7 @@ class Formatters {
     };
   }
 
-  private static generateCustomButton(plan: AgentPlan): AgentFileArtifact {
+  private static generateCustomButton(): AgentFileArtifact {
     const content = `import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
@@ -463,7 +656,7 @@ class CustomButton extends StatelessWidget {
     };
   }
 
-  private static generateCustomTextField(plan: AgentPlan): AgentFileArtifact {
+  private static generateCustomTextField(): AgentFileArtifact {
     const content = `import 'package:flutter/material.dart';
 
 class CustomTextField extends StatelessWidget {
@@ -535,7 +728,7 @@ class CustomTextField extends StatelessWidget {
     };
   }
 
-  private static generateLoadingIndicator(plan: AgentPlan): AgentFileArtifact {
+  private static generateLoadingIndicator(): AgentFileArtifact {
     const content = `import 'package:flutter/material.dart';
 
 class LoadingIndicator extends StatelessWidget {
@@ -575,7 +768,7 @@ class LoadingIndicator extends StatelessWidget {
     };
   }
 
-  private static generateEmptyState(plan: AgentPlan): AgentFileArtifact {
+  private static generateEmptyState(): AgentFileArtifact {
     const content = `import 'package:flutter/material.dart';
 import 'custom_button.dart';
 
@@ -700,7 +893,10 @@ class ShimmerSkeleton extends StatelessWidget {
     const fromJsonBody = model.fields
       .map((f) => {
         if (f.dartType.includes('DateTime')) {
-          return `      ${f.name}: json['${f.jsonKey}'] != null ? DateTime.parse(json['${f.jsonKey}'] as String) : null,`;
+          if (f.isNullable) {
+            return `      ${f.name}: json['${f.jsonKey}'] != null ? DateTime.parse(json['${f.jsonKey}'] as String) : null,`;
+          }
+          return `      ${f.name}: json['${f.jsonKey}'] != null ? DateTime.parse(json['${f.jsonKey}'] as String) : DateTime.now(),`;
         }
         if (f.dartType.includes('double')) {
           return `      ${f.name}: (json['${f.jsonKey}'] as num?)?.toDouble() ?? 0.0,`;
@@ -718,14 +914,17 @@ class ShimmerSkeleton extends StatelessWidget {
     const toJsonBody = model.fields
       .map((f) => {
         if (f.dartType.includes('DateTime')) {
-          return `      '${f.jsonKey}': ${f.name}${f.isNullable ? '?' : ''}.toIso8601String(),`;
+          return `      '${f.jsonKey}': ${f.name}${f.dartType.endsWith('?') ? '?' : ''}.toIso8601String(),`;
         }
         return `      '${f.jsonKey}': ${f.name},`;
       })
       .join('\n');
 
     const copyWithParams = model.fields
-      .map((f) => `    ${f.dartType}? ${f.name},`)
+      .map((f) => {
+        const nullableType = f.dartType.endsWith('?') ? f.dartType : `${f.dartType}?`;
+        return `    ${nullableType} ${f.name},`;
+      })
       .join('\n');
 
     const copyWithBody = model.fields
@@ -819,7 +1018,10 @@ class SupabaseService {
   private static generateEntityService(service: ServicePlan, plan: AgentPlan): AgentFileArtifact {
     const entityName = service.name.replace('Service', '');
     const modelName = entityName;
-    const tableName = this.toSnakeCase(entityName) + 's';
+    // E2E: resolve the REAL table name from the plan schema (fallback to pluralized guess).
+    const modelPlan = plan.models.find((m) => m.name === modelName);
+    const schemaTable = plan.schema.tables.find((t) => t.name === modelPlan?.tableName);
+    const tableName = schemaTable?.name ?? modelPlan?.tableName ?? `${this.toSnakeCase(entityName)}s`;
     const modelSnake = this.toSnakeCase(modelName);
 
     const content = `import 'package:supabase_flutter/supabase_flutter.dart';
@@ -883,6 +1085,10 @@ class ${service.name} {
     const modelName = mainModel?.name || 'Item';
     const modelSnake = this.toSnakeCase(modelName);
     const serviceName = `${modelName}Service`;
+
+    if (plan.stateManagement === 'riverpod') {
+      return this.generateRiverpodProvider(modelName, modelSnake, serviceName);
+    }
 
     const content = `import 'package:flutter/material.dart';
 import '../models/${modelSnake}.dart';
@@ -954,6 +1160,97 @@ class AppProvider extends ChangeNotifier {
     };
   }
 
+  private static generateRiverpodProvider(
+    modelName: string,
+    modelSnake: string,
+    serviceName: string,
+  ): AgentFileArtifact {
+    const serviceSnake = this.toSnakeCase(serviceName);
+    const content = `import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/${modelSnake}.dart';
+import '../services/${serviceSnake}.dart';
+import '../services/supabase_service.dart';
+
+class AppState {
+  final List<${modelName}> items;
+  final bool isLoading;
+  final String? error;
+
+  const AppState({
+    this.items = const [],
+    this.isLoading = false,
+    this.error,
+  });
+
+  AppState copyWith({
+    List<${modelName}>? items,
+    bool? isLoading,
+    String? error,
+  }) {
+    return AppState(
+      items: items ?? this.items,
+      isLoading: isLoading ?? this.isLoading,
+      error: error,
+    );
+  }
+}
+
+class AppNotifier extends StateNotifier<AppState> {
+  AppNotifier() : super(const AppState()) {
+    loadItems();
+  }
+
+  final ${serviceName} _service = ${serviceName}();
+
+  bool get isAuthenticated => SupabaseService.isAuthenticated;
+
+  Future<void> loadItems() async {
+    state = state.copyWith(isLoading: true, error: null);
+
+    try {
+      final items = await _service.fetchAll();
+      state = state.copyWith(items: items, isLoading: false);
+    } catch (e) {
+      state = state.copyWith(error: e.toString(), isLoading: false);
+    }
+  }
+
+  Future<void> addItem(${modelName} item) async {
+    try {
+      final created = await _service.create(item);
+      if (created != null) {
+        state = state.copyWith(items: [created, ...state.items]);
+      }
+    } catch (e) {
+      state = state.copyWith(error: e.toString());
+    }
+  }
+
+  Future<void> deleteItem(String id) async {
+    try {
+      await _service.delete(id);
+      state = state.copyWith(
+        items: state.items.where((item) => item.id != id).toList(),
+      );
+    } catch (e) {
+      state = state.copyWith(error: e.toString());
+    }
+  }
+}
+
+final appProvider = StateNotifierProvider<AppNotifier, AppState>((ref) {
+  return AppNotifier();
+});
+`;
+    return {
+      path: 'lib/state/app_provider.dart',
+      content,
+      language: 'dart',
+      description: 'Riverpod StateNotifier state controller for application data',
+      isNew: true,
+    };
+  }
+
   private static generateScreenFile(screen: ScreenPlan, plan: AgentPlan): AgentFileArtifact {
     if (screen.routeName === 'splash') {
       return this.generateSplashScreen();
@@ -965,7 +1262,13 @@ class AppProvider extends ChangeNotifier {
       return this.generateHomeScreen(plan);
     }
     if (screen.routeName === 'profile') {
-      return this.generateProfileScreen(plan);
+      return this.generateProfileScreen();
+    }
+    if (screen.routeName === 'detail') {
+      return this.generateDetailScreen(plan);
+    }
+    if (screen.routeName === 'cart') {
+      return this.generateCartScreen(plan);
     }
 
     // Default screen template
@@ -1004,7 +1307,8 @@ class ${screen.name} extends StatelessWidget {
   private static generateSplashScreen(): AgentFileArtifact {
     const content = `import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import '../../services/supabase_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_theme.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -1034,18 +1338,22 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   }
 
   Future<void> _checkAuth() async {
-    try {
-      await Supabase.initialize(url: AppConstants.supabaseUrl, anonKey: AppConstants.supabaseAnonKey);
-    } catch (e) {
-      // Handle initialization error
-    }
+    // Supabase is already initialized in main.dart — just route based on session.
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
     if (!mounted) return;
-    final session = Supabase.instance.client.auth.currentSession;
-    if (session != null) {
-      context.go('/');
-    } else {
+    try {
+      final session = Supabase.instance.client.auth.currentSession;
+      if (session != null) {
+        context.go('/');
+      } else {
+        context.go('/auth');
+      }
+    } catch (e) {
+      if (!mounted) return;
       context.go('/auth');
     }
+    // Reference constants to keep imports used across themes.
+    assert(AppConstants.appName.isNotEmpty);
   }
 
   @override
@@ -1069,6 +1377,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
             const CircularProgressIndicator(),
           ],
         ),
+      ),
       ),
     );
   }
@@ -1214,55 +1523,78 @@ class _AuthScreenState extends State<AuthScreen> {
     const mainModel = plan.models.find((m) => m.name !== 'UserProfile') || plan.models[0];
     const modelName = mainModel?.name || 'Item';
     const titleField = mainModel?.fields?.find((f) => f.name === 'title' || f.jsonKey === 'title');
-    const titleAccessor = titleField ? `item.${titleField.name}` : `'Item \${index + 1}'`;
+    const titleBase = titleField ? `item.${titleField.name}` : `'Item \${index + 1}'`;
+    // Null-safe accessor for Text() which requires non-null String
+    const titleAccessor = titleField?.isNullable ? `(${titleBase} ?? '')` : titleBase;
     const descField = mainModel?.fields?.find((f) => f.name === 'description' || f.jsonKey === 'description');
-    const descAccessor = descField ? `item.${descField.name}` : `'No description'`;
-    const idAccessor = mainModel?.fields?.find((f) => f.name === 'id') ? `item.${mainModel!.fields.find((f) => f.name === 'id')!.name}` : 'index';
+    const descBase = descField ? `item.${descField.name}` : `'No description'`;
+    const descAccessor = (descField?.isNullable || !descField) && !descBase.startsWith(`'`) ? `(${descBase} ?? '')` : descBase;
+    const idField = mainModel?.fields?.find((f) => f.name === 'id');
+    const idAccessor = idField ? `item.${idField.name}` : 'index';
+
+    const isRiverpod = plan.stateManagement === 'riverpod';
+    const stateImport = isRiverpod
+      ? `import 'package:flutter_riverpod/flutter_riverpod.dart';`
+      : `import 'package:provider/provider.dart';`;
+    const widgetDecl = isRiverpod
+      ? `class HomeScreen extends ConsumerWidget {
+  const HomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(appProvider);
+    final notifier = ref.read(appProvider.notifier);`
+      : `class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<AppProvider>();`;
+    const itemsExpr = isRiverpod ? 'state.items' : 'provider.items';
+    const loadingExpr = isRiverpod ? 'state.isLoading' : 'provider.isLoading';
+    const reloadExpr = isRiverpod ? 'notifier.loadItems()' : 'provider.loadItems()';
 
     const content = `import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+${stateImport}
 import 'package:go_router/go_router.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../../state/app_provider.dart';
 import '../../core/widgets/empty_state.dart';
 import '../../core/widgets/loading_indicator.dart';
+import '../../core/widgets/theme_toggle_button.dart';
 import '../../core/theme/app_theme.dart';
 
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final provider = context.watch<AppProvider>();
+${widgetDecl}
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('${plan.appName}'),
         actions: [
+          const ThemeToggleButton(),
           IconButton(
             icon: const Icon(Icons.person_outline),
             onPressed: () => context.push('/profile'),
           ),
         ],
       ),
-      body: provider.isLoading
+      body: ${loadingExpr}
           ? _buildShimmerList()
-          : provider.items.isEmpty
+          : ${itemsExpr}.isEmpty
               ? EmptyState(
                   icon: Icons.layers_outlined,
                   title: 'No ${modelName}s Found',
                   description: 'Get started by creating your first ${modelName.toLowerCase()} in Supabase.',
                   actionText: 'Refresh',
-                  onAction: () => provider.loadItems(),
+                  onAction: () => ${reloadExpr},
                 )
               : RefreshIndicator(
-                  onRefresh: () => provider.loadItems(),
+                  onRefresh: () => ${reloadExpr},
                   child: ListView.separated(
                     padding: const EdgeInsets.all(16),
-                    itemCount: provider.items.length,
+                    itemCount: ${itemsExpr}.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 12),
                     itemBuilder: (context, index) {
-                      final item = provider.items[index];
+                      final item = ${itemsExpr}[index];
                       return Card(
                         elevation: 0,
                         shape: RoundedRectangleBorder(
@@ -1285,7 +1617,7 @@ class HomeScreen extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                           ),
                           trailing: const Icon(Icons.chevron_right),
-                          onTap: () => context.push('/detail/${idAccessor}'),
+                          onTap: () => context.push('/detail/\${${idAccessor}}'),
                         ),
                       ).animate().fadeIn(delay: Duration(milliseconds: 50 * index), duration: 300.ms).slideY(begin: 0.05);
                     },
@@ -1327,11 +1659,13 @@ class HomeScreen extends StatelessWidget {
     };
   }
 
-  private static generateProfileScreen(plan: AgentPlan): AgentFileArtifact {
+  private static generateProfileScreen(): AgentFileArtifact {
     const content = `import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/supabase_service.dart';
 import '../../core/widgets/custom_button.dart';
+import '../../core/widgets/theme_toggle_button.dart';
+import '../../core/theme/theme_controller.dart';
 import '../../core/theme/app_theme.dart';
 
 class ProfileScreen extends StatelessWidget {
@@ -1342,7 +1676,10 @@ class ProfileScreen extends StatelessWidget {
     final user = SupabaseService.currentUser;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Profile')),
+      appBar: AppBar(
+        title: const Text('Profile'),
+        actions: const [ThemeToggleButton()],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(24),
         children: [
@@ -1359,7 +1696,38 @@ class ProfileScreen extends StatelessWidget {
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
+          const Text(
+            'Appearance',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          ValueListenableBuilder<ThemeMode>(
+            valueListenable: ThemeController.instance,
+            builder: (context, mode, _) => SegmentedButton<ThemeMode>(
+              segments: const [
+                ButtonSegment(
+                  value: ThemeMode.light,
+                  icon: Icon(Icons.light_mode_outlined, size: 18),
+                  label: Text('Light'),
+                ),
+                ButtonSegment(
+                  value: ThemeMode.dark,
+                  icon: Icon(Icons.dark_mode_outlined, size: 18),
+                  label: Text('Dark'),
+                ),
+                ButtonSegment(
+                  value: ThemeMode.system,
+                  icon: Icon(Icons.settings_suggest_outlined, size: 18),
+                  label: Text('Auto'),
+                ),
+              ],
+              selected: {mode},
+              onSelectionChanged: (selection) =>
+                  ThemeController.instance.setMode(selection.first),
+            ),
+          ),
+          const SizedBox(height: 8),
           ListTile(
             leading: const Icon(Icons.security),
             title: const Text('Account Security'),
@@ -1397,29 +1765,374 @@ class ProfileScreen extends StatelessWidget {
     };
   }
 
-  private static generateAppDart(plan: AgentPlan): AgentFileArtifact {
-    const content = `import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'core/theme/app_theme.dart';
-import 'core/router/app_router.dart';
-import 'state/app_provider.dart';
+  private static generateDetailScreen(plan: AgentPlan): AgentFileArtifact {
+    const mainModel = plan.models.find((m) => m.name !== 'UserProfile') || plan.models[0];
+    const modelName = mainModel?.name || 'Item';
+    const modelSnake = this.toSnakeCase(modelName);
+    const titleField = mainModel?.fields?.find((f) => f.name === 'title' || f.jsonKey === 'title');
+    const titleBase = titleField ? `item.${titleField.name}` : `'Details'`;
+    const titleExpr = titleField?.isNullable ? `(${titleBase} ?? 'Details')` : titleBase;
+    const descField = mainModel?.fields?.find((f) => f.name === 'description' || f.jsonKey === 'description');
+    const descBase = descField ? `item.${descField.name}` : `'No description available.'`;
+    const descExpr = descField?.isNullable ? `(${descBase} ?? 'No description available.')` : descBase;
+    const hasId = !!mainModel?.fields?.some((f) => f.name === 'id');
 
-class ${this.toPascalCase(plan.appName)}App extends StatelessWidget {
-  const ${this.toPascalCase(plan.appName)}App({super.key});
+    const isRiverpod = plan.stateManagement === 'riverpod';
+    const stateImport = isRiverpod
+      ? `import 'package:flutter_riverpod/flutter_riverpod.dart';`
+      : `import 'package:provider/provider.dart';`;
+    const widgetDecl = isRiverpod
+      ? `class DetailScreen extends ConsumerWidget {
+  const DetailScreen({super.key, this.itemId});
+
+  final String? itemId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(appProvider);
+    final items = state.items;
+    final isLoading = state.isLoading;`
+      : `class DetailScreen extends StatelessWidget {
+  const DetailScreen({super.key, this.itemId});
+
+  final String? itemId;
 
   @override
   Widget build(BuildContext context) {
-    return MultiProvider(
+    final provider = context.watch<AppProvider>();
+    final items = provider.items;
+    final isLoading = provider.isLoading;`;
+    const deleteExpr = isRiverpod ? 'ref.read(appProvider.notifier).deleteItem(item.id)' : 'provider.deleteItem(item.id)';
+
+    const content = `import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+${stateImport}
+import '../../models/${modelSnake}.dart';
+import '../../state/app_provider.dart';
+import '../../core/widgets/loading_indicator.dart';
+import '../../core/widgets/empty_state.dart';
+
+${widgetDecl}
+
+    if (isLoading && items.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Details')),
+        body: const LoadingIndicator(message: 'Loading details...'),
+      );
+    }
+
+    final matches = ${hasId ? `itemId == null ? <${modelName}>[] : items.where((e) => e.id == itemId).toList()` : `<${modelName}>[]`};
+    final item = matches.isNotEmpty ? matches.first : null;
+
+    if (item == null) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Details'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => context.pop(),
+          ),
+        ),
+        body: EmptyState(
+          icon: Icons.search_off_outlined,
+          title: 'Item not found',
+          description: 'The requested ${modelName.toLowerCase()} could not be found. It may have been deleted.',
+          actionText: 'Go back',
+          onAction: () => context.pop(),
+        ),
+      );
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(${titleExpr}),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => context.pop(),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () async {
+              await ${deleteExpr};
+              if (context.mounted) context.pop();
+            },
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Icon(Icons.star, size: 64),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            ${titleExpr},
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            ${descExpr},
+            style: TextStyle(fontSize: 15, color: Theme.of(context).textTheme.bodyMedium?.color?.withOpacity(0.7)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+`;
+    return {
+      path: 'lib/screens/detail/detail_screen.dart',
+      content,
+      language: 'dart',
+      description: `${modelName} detail view bound to the route id param`,
+      isNew: true,
+    };
+  }
+
+  private static generateCartScreen(plan: AgentPlan): AgentFileArtifact {
+    const isRiverpod = plan.stateManagement === 'riverpod';
+    const stateImport = isRiverpod
+      ? `import 'package:flutter_riverpod/flutter_riverpod.dart';`
+      : `import 'package:provider/provider.dart';`;
+    const widgetDecl = isRiverpod
+      ? `class CartScreen extends ConsumerStatefulWidget {
+  const CartScreen({super.key});
+
+  @override
+  ConsumerState<CartScreen> createState() => _CartScreenState();
+}
+
+class _CartScreenState extends ConsumerState<CartScreen> {`
+      : `class CartScreen extends StatefulWidget {
+  const CartScreen({super.key});
+
+  @override
+  State<CartScreen> createState() => _CartScreenState();
+}
+
+class _CartScreenState extends State<CartScreen> {`;
+    const productsExpr = isRiverpod ? 'ref.watch(appProvider).items' : 'context.watch<AppProvider>().items';
+
+    const content = `import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+${stateImport}
+import '../../state/app_provider.dart';
+import '../../services/supabase_service.dart';
+import '../../core/widgets/custom_button.dart';
+import '../../core/widgets/empty_state.dart';
+import '../../core/widgets/loading_indicator.dart';
+import '../../core/theme/app_theme.dart';
+
+${widgetDecl}
+  final Map<String, int> _quantities = {};
+  bool _isPlacingOrder = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final products = ${productsExpr};
+
+    if (products.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Cart'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => context.pop(),
+          ),
+        ),
+        body: EmptyState(
+          icon: Icons.shopping_cart_outlined,
+          title: 'Your cart is empty',
+          description: 'Browse the catalog and add items to get started.',
+          actionText: 'Browse products',
+          onAction: () => context.go('/'),
+        ),
+      );
+    }
+
+    double total = 0;
+    for (final p in products) {
+      total += (p.price as num).toDouble() * (_quantities[p.id] ?? 1);
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Cart'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => context.pop(),
+        ),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: products.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 12),
+              itemBuilder: (context, index) {
+                final item = products[index];
+                final qty = _quantities[item.id] ?? 1;
+                return Card(
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withOpacity(0.3)),
+                  ),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.all(12),
+                    leading: CircleAvatar(
+                      backgroundColor: AppTheme.primary.withOpacity(0.1),
+                      child: const Icon(Icons.shopping_bag_outlined, color: AppTheme.primary),
+                    ),
+                    title: Text(item.title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text('\\\${(item.price as num).toDouble().toStringAsFixed(2)} each'),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.remove_circle_outline),
+                          onPressed: qty > 1
+                              ? () => setState(() => _quantities[item.id] = qty - 1)
+                              : null,
+                        ),
+                        Text('$qty', style: const TextStyle(fontWeight: FontWeight.bold)),
+                        IconButton(
+                          icon: const Icon(Icons.add_circle_outline),
+                          onPressed: () => setState(() => _quantities[item.id] = qty + 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardColor,
+              border: Border(top: BorderSide(color: Theme.of(context).dividerColor.withOpacity(0.3))),
+            ),
+            child: SafeArea(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Total', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      Text(
+                        '\\\${total.toStringAsFixed(2)}',
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: AppTheme.primary),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  CustomButton(
+                    text: 'Place order',
+                    isLoading: _isPlacingOrder,
+                    icon: Icons.shopping_bag_outlined,
+                    onPressed: () => _checkout(products, total),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _checkout(List<dynamic> products, double total) async {
+    final userId = SupabaseService.currentUser?.id;
+    if (userId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please sign in to place an order.')),
+        );
+      }
+      return;
+    }
+
+    setState(() => _isPlacingOrder = true);
+    try {
+      await SupabaseService.client.from('orders').insert({
+        'user_id': userId,
+        'total_amount': total,
+        'status': 'pending',
+        'items_json': products
+            .map((p) => {'id': p.id, 'qty': _quantities[p.id] ?? 1, 'price': (p.price as num).toDouble()})
+            .toList(),
+      });
+      _quantities.clear();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Order placed successfully!')),
+        );
+        context.go('/');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Checkout failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isPlacingOrder = false);
+    }
+  }
+}
+`;
+    return {
+      path: 'lib/screens/cart/cart_screen.dart',
+      content,
+      language: 'dart',
+      description: 'Shopping cart with quantities and Supabase order checkout',
+      isNew: true,
+    };
+  }
+
+  private static generateAppDart(plan: AgentPlan): AgentFileArtifact {
+    const className = this.appClassName(plan.appName);
+    const isRiverpod = plan.stateManagement === 'riverpod';
+    const stateImport = isRiverpod
+      ? `import 'package:flutter_riverpod/flutter_riverpod.dart';`
+      : `import 'package:provider/provider.dart';
+import 'state/app_provider.dart';`;
+    const wrapperOpen = isRiverpod ? `    return ProviderScope(` : `    return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AppProvider()),
-      ],
-      child: MaterialApp.router(
-        title: '${plan.appName}',
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        themeMode: ThemeMode.system,
-        routerConfig: AppRouter.router,
+      ],`;
+    const content = `import 'package:flutter/material.dart';
+${stateImport}
+import 'core/theme/app_theme.dart';
+import 'core/theme/theme_controller.dart';
+import 'core/router/app_router.dart';
+
+class ${className} extends StatelessWidget {
+  const ${className}({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+${wrapperOpen}
+      child: ValueListenableBuilder<ThemeMode>(
+        valueListenable: ThemeController.instance,
+        builder: (context, themeMode, _) => MaterialApp.router(
+          title: '${plan.appName}',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: themeMode,
+          routerConfig: AppRouter.router,
+        ),
       ),
     );
   }
@@ -1429,7 +2142,9 @@ class ${this.toPascalCase(plan.appName)}App extends StatelessWidget {
       path: 'lib/app.dart',
       content,
       language: 'dart',
-      description: 'Main App widget with MultiProvider and GoRouter',
+      description: isRiverpod
+        ? 'Main App widget with Riverpod ProviderScope and GoRouter'
+        : 'Main App widget with MultiProvider and GoRouter',
       isNew: true,
     };
   }
@@ -1438,10 +2153,14 @@ class ${this.toPascalCase(plan.appName)}App extends StatelessWidget {
     const content = `import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/constants/app_constants.dart';
+import 'core/theme/theme_controller.dart';
 import 'app.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Restore the saved theme (light / dark / system) before first frame.
+  await ThemeController.instance.load();
 
   // Initialize Supabase Client
   await Supabase.initialize(
@@ -1449,7 +2168,7 @@ Future<void> main() async {
     anonKey: AppConstants.supabaseAnonKey,
   );
 
-  runApp(const ${this.toPascalCase(plan.appName)}App());
+  runApp(const ${this.appClassName(plan.appName)}());
 }
 `;
     return {
@@ -1459,6 +2178,16 @@ Future<void> main() async {
       description: 'Application entry point initializing Supabase',
       isNew: true,
     };
+  }
+
+  /**
+   * Root widget class name for an app. Sanitized so it is always a valid
+   * Dart identifier and never stutters (MyApp -> MyApp, not MyAppApp).
+   */
+  private static appClassName(appName: string): string {
+    const pascal = this.toPascalCase(appName);
+    const safe = /^[A-Za-z]/.test(pascal) ? pascal : `App${pascal}`;
+    return safe.endsWith('App') ? safe : `${safe}App`;
   }
 
   private static toPascalCase(str: string): string {

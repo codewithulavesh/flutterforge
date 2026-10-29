@@ -1,48 +1,45 @@
 import { type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Sparkles } from 'lucide-react';
+import { BrandLogo } from '@/components/BrandLogo';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
 export function AuthLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-screen flex bg-[var(--ff-bg)]">
+    <div className="min-h-screen flex bg-[var(--ff-bg)] ff-brand ff-studio">
       {/* Left side - branding */}
-      <div className="hidden lg:flex flex-1 flex-col justify-between p-12 relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-blue-600/10 via-transparent to-purple-600/10" />
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/5 rounded-full blur-3xl" />
+      <div className="hidden lg:flex flex-1 flex-col justify-between p-12 relative overflow-hidden ff-dark-block">
+        <div className="absolute inset-0 bg-gradient-to-br from-[#02AFB9]/15 via-transparent to-[#F07067]/10" />
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-[#02AFB9]/10 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-[#FED8B7]/20 rounded-full blur-3xl" />
 
         <div className="relative z-10">
           <Link to="/" className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-lg bg-[var(--ff-primary)] flex items-center justify-center">
-              <Sparkles size={20} className="text-white" />
-            </div>
-            <span className="text-xl font-bold text-white">FlutterForge</span>
+            <BrandLogo size={36} />
+            <span className="text-xl font-bold text-[var(--ff-text)]">FlutterForge</span>
           </Link>
         </div>
 
         <div className="relative z-10 max-w-md">
-          <h2 className="text-3xl font-bold text-white mb-4 leading-tight">
+          <h2 className="text-3xl font-bold text-[var(--ff-text)] mb-4 leading-tight">
             Build Flutter Apps With AI
           </h2>
           <p className="text-[var(--ff-text-muted)] text-lg leading-relaxed">
             Describe your application. FlutterForge generates the Flutter project, runs it, fixes it, and lets you ship it.
           </p>
-          <div className="mt-8 flex items-center gap-6">
-            <div>
-              <div className="text-2xl font-bold text-white">10k+</div>
-              <div className="text-sm text-[var(--ff-text-dim)]">Apps Generated</div>
-            </div>
-            <div className="w-px h-10 bg-[var(--ff-border)]" />
-            <div>
-              <div className="text-2xl font-bold text-white">50k+</div>
-              <div className="text-sm text-[var(--ff-text-dim)]">Developers</div>
-            </div>
-            <div className="w-px h-10 bg-[var(--ff-border)]" />
-            <div>
-              <div className="text-2xl font-bold text-white">99.9%</div>
-              <div className="text-sm text-[var(--ff-text-dim)]">Uptime</div>
-            </div>
+          <div className="mt-8 space-y-3">
+            {[
+              { title: 'Local-first engine', desc: 'The Flutter SDK runs on your machine.' },
+              { title: 'Real, runnable code', desc: 'Every project is complete and exportable.' },
+              { title: 'Self-healing builds', desc: 'Compile errors feed back into the agent.' },
+            ].map((item) => (
+              <div key={item.title} className="flex items-start gap-2.5">
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ff-primary)]" />
+                <p className="text-sm text-[var(--ff-text-muted)]">
+                  <span className="font-semibold text-[var(--ff-text)]">{item.title}.</span>{' '}
+                  {item.desc}
+                </p>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -59,10 +56,8 @@ export function AuthLayout({ children }: { children: ReactNode }) {
         <div className="w-full max-w-md flex-1 flex flex-col justify-center">
           <div className="lg:hidden mb-8">
             <Link to="/" className="flex items-center gap-2">
-              <div className="w-9 h-9 rounded-lg bg-[var(--ff-primary)] flex items-center justify-center">
-                <Sparkles size={20} className="text-white" />
-              </div>
-              <span className="text-xl font-bold text-white">FlutterForge</span>
+              <BrandLogo size={36} />
+              <span className="text-xl font-bold text-[var(--ff-text)]">FlutterForge</span>
             </Link>
           </div>
           {children}

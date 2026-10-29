@@ -211,6 +211,11 @@ export interface Template {
   icon: string;
   color: string;
   features: string[];
+  badge?: string;
+  category?: 'starter' | 'commerce' | 'analytics' | 'social' | 'ai';
+  suggestedName?: string;
+  defaultPrompt?: string;
+  chips?: string[];
 }
 
 export type ConnectorStatus = 'connected' | 'disconnected' | 'error' | 'configuring';
@@ -223,17 +228,4 @@ export interface ConnectorField {
   required?: boolean;
   options?: string[];
   value: string;
-}
-
-export interface Connector {
-  id: string;
-  name: string;
-  description: string;
-  icon: string;
-  color: string;
-  category: 'database' | 'auth' | 'storage' | 'ai' | 'payment' | 'analytics' | 'messaging' | 'other';
-  status: ConnectorStatus;
-  fields: ConnectorField[];
-  docsUrl?: string;
-  connectedAt?: string;
 }

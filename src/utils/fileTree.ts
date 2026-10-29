@@ -52,15 +52,6 @@ export function getFileExtension(path: string): string {
   return parts.length > 1 ? parts[parts.length - 1] : '';
 }
 
-export function getFileIcon(type: string): string {
-  const ext = type.toLowerCase();
-  if (ext === 'dart') return 'FileCode2';
-  if (ext === 'yaml' || ext === 'yml') return 'Settings';
-  if (ext === 'md') return 'FileText';
-  if (ext === 'json') return 'Braces';
-  return 'File';
-}
-
 export function flattenTree(node: TreeNode): TreeNode[] {
   const result: TreeNode[] = [];
   if (node.type === 'file') result.push(node);

@@ -15,7 +15,10 @@ export class AgentValidator {
         severity: 'error',
         code: 'MISSING_PUBSPEC',
         message: 'pubspec.yaml is missing from the generated project files.',
-        autoFixAvailable: true,
+        suggestion: 'Regenerate with baseline backfill (mergeWithBaseline) to restore it.',
+        // Honest flag: autoHeal injects deps/imports but cannot recreate a
+        // whole missing file — creation happens in the orchestrator.
+        autoFixAvailable: false,
       });
     } else {
       this.validatePubspec(pubspec, issues);
@@ -29,7 +32,8 @@ export class AgentValidator {
         severity: 'error',
         code: 'MISSING_MAIN_DART',
         message: 'lib/main.dart entrypoint is missing.',
-        autoFixAvailable: true,
+        suggestion: 'Regenerate with baseline backfill (mergeWithBaseline) to restore it.',
+        autoFixAvailable: false,
       });
     } else {
       this.validateMainDart(mainDart, issues);
@@ -38,6 +42,13 @@ export class AgentValidator {
     // 3. Validate each Dart file
     for (const file of files.filter((f) => f.language === 'dart' || f.path.endsWith('.dart'))) {
       this.validateDartFile(file, issues);
+    }
+
+    // 3b. Cross-file: every hosted `package:X/` import must be declared.
+    // LLMs routinely import riverpod/animate/etc. without declaring them —
+    // `flutter pub get` succeeds but compilation then fails on the import.
+    if (pubspec) {
+      this.validatePackageImports(files, pubspec, issues);
     }
 
     // 4. Validate SQL files
@@ -63,39 +74,197 @@ export class AgentValidator {
     const healed = [...files];
     const fixedIssues: Array<{ issue: ValidationIssue; fixDescription: string }> = [];
 
-    // Auto-fix missing pubspec dependencies
+    const usesRiverpod =
+      healed.some((f) => f.path.endsWith('.dart') && f.content.includes('flutter_riverpod')) ||
+      healed.some((f) => f.path === 'pubspec.yaml' && f.content.includes('flutter_riverpod'));
+
+    // Auto-fix missing pubspec dependencies (state-management aware:
+    // riverpod projects need flutter_riverpod, provider projects need provider).
     const pubspecIdx = healed.findIndex((f) => f.path === 'pubspec.yaml');
     if (pubspecIdx >= 0) {
       let pubspecContent = healed[pubspecIdx].content;
-      const requiredDeps: Record<string, string> = {
-        supabase_flutter: '^2.8.0',
-        go_router: '^14.6.2',
-        provider: '^6.1.2',
+      const usesProvider =
+        healed.some((f) => f.path.endsWith('.dart') && (f.content.includes('package:provider/') || f.content.includes('ChangeNotifierProvider'))) ||
+        pubspecContent.includes('provider:');
+
+      const knownVersions: Record<string, string> = {
+        supabase_flutter: '^2.8.3',
+        go_router: '^14.8.1',
         google_fonts: '^6.2.1',
-        flutter_animate: '^4.5.0',
+        flutter_animate: '^4.5.2',
         cached_network_image: '^3.4.1',
+        intl: '^0.20.2',
+        shared_preferences: '^2.5.2',
+        flutter_svg: '^2.0.17',
+        shimmer: '^3.0.0',
+        fl_chart: '^0.70.2',
+        dio: '^5.8.0+1',
+        http: '^1.3.0',
+        uuid: '^4.5.1',
+        path_provider: '^2.1.5',
       };
+      if (usesRiverpod) knownVersions['flutter_riverpod'] = '^2.6.1';
+      if (usesProvider || !usesRiverpod) knownVersions['provider'] = '^6.1.2';
+
+      // Also discover any undeclared packages imported in Dart files
+      const undeclared = this.findUndeclaredImports(healed, pubspecContent);
+      for (const u of undeclared) {
+        if (!knownVersions[u]) {
+          knownVersions[u] = 'any';
+        }
+      }
 
       let changed = false;
-      for (const [dep, version] of Object.entries(requiredDeps)) {
-        if (!pubspecContent.includes(dep)) {
-          pubspecContent = pubspecContent.replace('dependencies:\n', `dependencies:\n  ${dep}: ${version}\n`);
+      for (const [dep, version] of Object.entries(knownVersions)) {
+        if (!new RegExp(`^ {2}${dep}\\s*:`, 'm').test(pubspecContent)) {
+          // Robust injection under dependencies:
+          if (/^dependencies:\s*$/m.test(pubspecContent)) {
+            pubspecContent = pubspecContent.replace(/^(dependencies:\s*)$/m, `$1\n  ${dep}: ${version}`);
+            changed = true;
+          } else if (/^dependencies:/m.test(pubspecContent)) {
+            pubspecContent = pubspecContent.replace(/^(dependencies:[^\n]*\n)/m, `$1  ${dep}: ${version}\n`);
+            changed = true;
+          }
+          if (changed) {
+            fixedIssues.push({
+              issue: {
+                filePath: 'pubspec.yaml',
+                severity: 'warning',
+                code: 'AUTO_ADDED_DEPENDENCY',
+                message: `Added missing dependency '${dep}: ${version}' to pubspec.yaml`,
+                autoFixAvailable: true,
+              },
+              fixDescription: `Injected '${dep}: ${version}' into pubspec.yaml`,
+            });
+          }
+        }
+      }
+
+      // Fix intl/SDK conflict: flutter_localizations from the SDK pins
+      // intl ^0.20.x, so a stale `intl: ^0.19.0` (or older) can never
+      // resolve — this exact failure broke real preview builds.
+      if (/flutter_localizations\s*:/.test(pubspecContent)) {
+        const intlLine = pubspecContent.match(/^(\s*intl\s*:\s*)['"]?([^'"\s]+)['"]?/m);
+        const ver = intlLine?.[2] ?? '';
+        const mm = ver.match(/(\d+)\.(\d+)/);
+        const stale = mm !== null && (parseInt(mm[1], 10) === 0 && parseInt(mm[2], 10) < 20);
+        if (stale && intlLine) {
+          pubspecContent = pubspecContent.replace(
+            /^(\s*intl\s*:\s*)['"]?[^'"\s]+['"]?/m,
+            `$1^0.20.3`,
+          );
           changed = true;
           fixedIssues.push({
             issue: {
               filePath: 'pubspec.yaml',
-              severity: 'warning',
-              code: 'AUTO_ADDED_DEPENDENCY',
-              message: `Added missing dependency '${dep}: ${version}' to pubspec.yaml`,
+              severity: 'error',
+              code: 'INTL_SDK_CONFLICT',
+              message: `intl ${ver} conflicts with flutter_localizations from the SDK (requires intl ^0.20.3) — version solving would fail.`,
               autoFixAvailable: true,
             },
-            fixDescription: `Injected '${dep}: ${version}' into pubspec.yaml`,
+            fixDescription: `Bumped intl from ${ver} to ^0.20.3`,
           });
         }
       }
 
       if (changed) {
         healed[pubspecIdx] = { ...healed[pubspecIdx], content: pubspecContent };
+      }
+
+      // Self-dependency + self-stem import healing: the LLM derives deps and
+      // imports from the app name (app `apex_3e9d1a` gets `apex: ^1.0.0` or
+      // `import 'package:apex/...'`). A package can never depend on itself,
+      // and `package:<stem>/` can never resolve when the package is
+      // `<stem>_<suffix>` — both break `flutter pub get` / compilation.
+      const ownName = (pubspecContent.match(/^name\s*:\s*([A-Za-z0-9_]+)/m)?.[1] || '').trim();
+      if (ownName) {
+        const selfDepRe = new RegExp(`^ {2}${ownName}\\s*:\\s*(?:[^\\n]*\\n(?: {4}.*\\n?)*)?`, 'm');
+        if (selfDepRe.test(pubspecContent)) {
+          pubspecContent = pubspecContent.replace(selfDepRe, '');
+          healed[pubspecIdx] = { ...healed[pubspecIdx], content: pubspecContent };
+          fixedIssues.push({
+            issue: {
+              filePath: 'pubspec.yaml',
+              severity: 'error',
+              code: 'SELF_DEPENDENCY_REMOVED',
+              message: `pubspec depended on itself ('${ownName}') — a package can never depend on itself, version solving would fail.`,
+              autoFixAvailable: true,
+            },
+            fixDescription: `Removed self-dependency '${ownName}' from pubspec.yaml`,
+          });
+        }
+
+        const declared = new Set(
+          [...pubspecContent.matchAll(/^ {2}([A-Za-z0-9_]+)\s*:/gm)].map((m) => m[1]),
+        );
+        const stems = new Set<string>();
+        for (const f of healed) {
+          if (!f.path.endsWith('.dart')) continue;
+          for (const m of f.content.matchAll(/import\s+['"]package:([^/'"]+)\//g)) {
+            stems.add(m[1]);
+          }
+        }
+        const dartPaths = new Set(
+          healed.filter((f) => f.path.endsWith('.dart')).map((f) => f.path),
+        );
+        const dropDepBlock = (depName: string): boolean => {
+          const re = new RegExp(`^ {2}${depName}\\s*:\\s*(?:[^\\n]*\\n(?: {4}.*\\n?)*)?`, 'm');
+          if (!re.test(pubspecContent)) return false;
+          pubspecContent = pubspecContent.replace(re, '');
+          healed[pubspecIdx] = { ...healed[pubspecIdx], content: pubspecContent };
+          return true;
+        };
+        for (const stem of stems) {
+          if (stem === ownName || !ownName.startsWith(`${stem}_`)) continue;
+          const isDeclared = declared.has(stem);
+          // Prove self-usage: every `package:<stem>/<sub>` import must map to
+          // a real generated file (`lib/<sub>`). If so, the stem dep (when
+          // present) exists only to satisfy these wrong imports — rewrite the
+          // imports AND drop the dep. Otherwise the dep may be a genuine
+          // third-party package and the build-time compiler (which checks
+          // pub.dev for real) decides its fate.
+          const subs = new Set<string>();
+          for (const f of healed) {
+            if (!f.path.endsWith('.dart')) continue;
+            for (const m of f.content.matchAll(new RegExp(`package:${stem}\\/([^'"]+)`, 'g'))) {
+              subs.add(m[1]);
+            }
+          }
+          const allLocal =
+            subs.size > 0 &&
+            [...subs].every((s) => dartPaths.has(`lib/${s}`) || dartPaths.has(s));
+          if (isDeclared && !allLocal) continue;
+          const from = `package:${stem}/`;
+          const to = `package:${ownName}/`;
+          for (let i = 0; i < healed.length; i++) {
+            const f = healed[i];
+            if (!f.path.endsWith('.dart') || !f.content.includes(from)) continue;
+            healed[i] = { ...f, content: f.content.split(from).join(to) };
+            fixedIssues.push({
+              issue: {
+                filePath: f.path,
+                severity: 'error',
+                code: 'SELF_IMPORT_REWRITTEN',
+                message: `Imported '${from}...' but the package name is '${ownName}' — that URI can never resolve.`,
+                autoFixAvailable: true,
+              },
+              fixDescription: `Rewrote '${from}...' to '${to}...'`,
+            });
+          }
+          if (isDeclared && dropDepBlock(stem)) {
+            declared.delete(stem);
+            fixedIssues.push({
+              issue: {
+                filePath: 'pubspec.yaml',
+                severity: 'error',
+                code: 'SELF_STEM_DEP_REMOVED',
+                message: `pubspec depended on '${stem}' only to satisfy mis-scoped self-imports (now rewritten to '${ownName}') — that pin could never resolve.`,
+                autoFixAvailable: true,
+              },
+              fixDescription: `Removed bogus '${stem}' dependency from pubspec.yaml`,
+            });
+          }
+        }
       }
     }
 
@@ -155,8 +324,9 @@ export class AgentValidator {
           });
         }
 
-        // Missing provider
-        if ((content.includes('Provider.of') || content.includes('context.watch<') || content.includes('context.read<')) && !content.includes('package:provider')) {
+        // Missing provider (only for provider-based projects — riverpod code
+        // uses ref.watch, never context.watch, so injecting this is wrong).
+        if (!usesRiverpod && (content.includes('Provider.of') || content.includes('context.watch<') || content.includes('context.read<')) && !content.includes('package:provider')) {
           content = `import 'package:provider/provider.dart';\n` + content;
           modified = true;
           fixedIssues.push({
@@ -211,7 +381,23 @@ export class AgentValidator {
   }
 
   private static validatePubspec(file: AgentFileArtifact, issues: ValidationIssue[]) {
-    const requiredPackages = ['supabase_flutter', 'go_router', 'provider', 'flutter_animate'];
+    const ownName = (file.content.match(/^name\s*:\s*([A-Za-z0-9_]+)/m)?.[1] || '').trim();
+    // A package can never depend on itself (LLMs derive this from the app
+    // name) — version solving fails outright.
+    if (ownName && new RegExp(`^ {2}${ownName}\\s*:`, 'm').test(file.content)) {
+      issues.push({
+        filePath: file.path,
+        severity: 'error',
+        code: 'SELF_DEPENDENCY',
+        message: `pubspec declares a dependency on itself ('${ownName}') — version solving would fail.`,
+        suggestion: `Remove the '${ownName}' entry under dependencies`,
+        autoFixAvailable: true,
+      });
+    }
+    const usesRiverpod = file.content.includes('flutter_riverpod');
+    const requiredPackages = usesRiverpod
+      ? ['supabase_flutter', 'go_router', 'flutter_riverpod', 'flutter_animate']
+      : ['supabase_flutter', 'go_router', 'provider', 'flutter_animate'];
     for (const pkg of requiredPackages) {
       if (!file.content.includes(pkg)) {
         issues.push({
@@ -220,6 +406,24 @@ export class AgentValidator {
           code: 'MISSING_RECOMMENDED_DEP',
           message: `Recommended package '${pkg}' is not declared in pubspec.yaml.`,
           suggestion: `Add ${pkg} under dependencies`,
+          autoFixAvailable: true,
+        });
+      }
+    }
+
+    // intl/SDK conflict: flutter_localizations from the SDK pins intl
+    // ^0.20.x — a stale `intl: ^0.19.0` can never resolve (broke real builds).
+    if (/flutter_localizations\s*:/.test(file.content)) {
+      const intlLine = file.content.match(/^\s*intl\s*:\s*['"]?([^'"\s]+)['"]?/m);
+      const ver = intlLine?.[1] ?? '';
+      const mm = ver.match(/(\d+)\.(\d+)/);
+      if (mm && parseInt(mm[1], 10) === 0 && parseInt(mm[2], 10) < 20) {
+        issues.push({
+          filePath: file.path,
+          severity: 'error',
+          code: 'INTL_SDK_CONFLICT',
+          message: `intl ${ver} conflicts with flutter_localizations from the SDK (requires intl ^0.20.3) — version solving would fail.`,
+          suggestion: 'Bump intl to ^0.20.3',
           autoFixAvailable: true,
         });
       }
@@ -251,17 +455,40 @@ export class AgentValidator {
   }
 
   private static validateDartFile(file: AgentFileArtifact, issues: ValidationIssue[]) {
-    // Check balanced braces
-    const openBraces = (file.content.match(/{/g) || []).length;
-    const closeBraces = (file.content.match(/}/g) || []).length;
-    if (openBraces !== closeBraces) {
+    // Wrong riverpod entrypoint LLMs emit: this file does not exist, so
+    // every riverpod symbol (ConsumerWidget, ref, providers) goes undefined
+    // in a cascade. Separated from autoHeal so live repair sees it too.
+    if (file.content.includes('flutter_riverpod/flutter_provider.dart')) {
       issues.push({
         filePath: file.path,
         severity: 'error',
-        code: 'UNBALANCED_BRACES',
-        message: `Syntax error: Unbalanced curly braces (${openBraces} open vs ${closeBraces} close).`,
-        autoFixAvailable: false,
+        code: 'BAD_RIVERPOD_IMPORT',
+        message: `Imports 'package:flutter_riverpod/flutter_provider.dart' which does not exist (correct: 'package:flutter_riverpod/flutter_riverpod.dart').`,
+        suggestion: `Replace with 'package:flutter_riverpod/flutter_riverpod.dart'`,
+        autoFixAvailable: true,
       });
+    }
+
+    // Check balanced delimiters — the real Flutter compiler rejects these,
+    // and the offline templates once shipped a missing paren (splash).
+    // Naive counting, same philosophy as the historical brace check.
+    const delimiterPairs: Array<{ open: RegExp; close: RegExp; label: string; code: string }> = [
+      { open: /\{/g, close: /\}/g, label: 'curly braces', code: 'UNBALANCED_BRACES' },
+      { open: /\(/g, close: /\)/g, label: 'parentheses', code: 'UNBALANCED_PARENS' },
+      { open: /\[/g, close: /\]/g, label: 'square brackets', code: 'UNBALANCED_BRACKETS' },
+    ];
+    for (const { open, close, label, code } of delimiterPairs) {
+      const openCount = (file.content.match(open) || []).length;
+      const closeCount = (file.content.match(close) || []).length;
+      if (openCount !== closeCount) {
+        issues.push({
+          filePath: file.path,
+          severity: 'error',
+          code,
+          message: `Syntax error: Unbalanced ${label} (${openCount} open vs ${closeCount} close).`,
+          autoFixAvailable: false,
+        });
+      }
     }
 
     // Check placeholder / stub patterns
@@ -272,6 +499,69 @@ export class AgentValidator {
         code: 'CONTAINS_STUBS',
         message: `File contains stub or placeholder comments that should be fully implemented.`,
         autoFixAvailable: false,
+      });
+    }
+  }
+
+  /**
+   * Hosted `package:X/` imports used across Dart files that are neither SDK
+   * bundled nor declared in the pubspec.
+   */
+  private static findUndeclaredImports(files: AgentFileArtifact[], pubspecContent: string): string[] {
+    const sdkBundled = new Set([
+      'flutter', 'flutter_test', 'flutter_driver', 'integration_test',
+      'flutter_localizations', 'flutter_web_plugins', 'flutter_gpu',
+    ]);
+    // A package never declares itself: `package:<ownName>/` self-imports are
+    // always valid. Without this exclusion the fixer is told to "add" the app
+    // itself as a dependency — manufacturing the unresolvable self-dep.
+    const ownName = (pubspecContent.match(/^name\s*:\s*([A-Za-z0-9_]+)/m)?.[1] || '').trim();
+    const used = new Set<string>();
+    for (const f of files) {
+      if (!(f.language === 'dart' || f.path.endsWith('.dart'))) continue;
+      const re = /import\s+['"]package:([^/'"]+)\//g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(f.content)) !== null) used.add(m[1]);
+    }
+    return [...used].filter(
+      (pkg) => pkg !== ownName && !sdkBundled.has(pkg) && !new RegExp(`^ {2}${pkg}\\s*:`, 'm').test(pubspecContent),
+    );
+  }
+
+  /**
+   * Every `import 'package:X/...'` used by Dart files must be a declared
+   * dependency (or Flutter SDK bundle). Otherwise compilation fails on the
+   * import even though `pub get` succeeded.
+   */
+  private static validatePackageImports(
+    files: AgentFileArtifact[],
+    pubspec: AgentFileArtifact,
+    issues: ValidationIssue[],
+  ) {
+    const ownName = (pubspec.content.match(/^name\s*:\s*([A-Za-z0-9_]+)/m)?.[1] || '').trim();
+    for (const pkg of this.findUndeclaredImports(files, pubspec.content)) {
+      // Self-stem imports (`package:apex/...` in package `apex_3e9d1a`) must
+      // be rewritten to the real package name — telling the fixer to "add
+      // the dependency" is exactly what produced unresolvable `apex: ^1.0.0`
+      // pins that broke real preview builds.
+      if (ownName && ownName.startsWith(`${pkg}_`)) {
+        issues.push({
+          filePath: 'pubspec.yaml',
+          severity: 'error',
+          code: 'SELF_IMPORT_MISMATCH',
+          message: `Dart code imports 'package:${pkg}/' but the package name is '${ownName}' — rewrite those imports to 'package:${ownName}/' and do NOT add any '${pkg}' dependency.`,
+          suggestion: `Replace package:${pkg}/ with package:${ownName}/ in Dart imports`,
+          autoFixAvailable: true,
+        });
+        continue;
+      }
+      issues.push({
+        filePath: 'pubspec.yaml',
+        severity: 'error',
+        code: 'MISSING_DECLARED_DEP',
+        message: `Dart code imports 'package:${pkg}/' but '${pkg}' is not declared in pubspec.yaml — compilation would fail on the import.`,
+        suggestion: `Add ${pkg} under dependencies`,
+        autoFixAvailable: true,
       });
     }
   }

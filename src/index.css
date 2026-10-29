@@ -1,24 +1,10 @@
-@import url('https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Caveat+Brush&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@font-face {
-  font-family: 'Rusty Cola Pen';
-  src: local('Permanent Marker'), local('Caveat Brush');
-  font-display: swap;
-}
-
-.rusty-font {
-  font-family: 'Rusty Cola Pen', 'Permanent Marker', 'Caveat Brush', cursive;
-  font-weight: 400;
-  letter-spacing: -0.03em;
-  line-height: 0.9;
-  transform: rotate(-2deg);
-}
-
 @layer base {
   :root {
+    color-scheme: dark;
     --ff-bg: #0a0a0b;
     --ff-surface: #131316;
     --ff-surface-2: #1a1a1f;
@@ -33,9 +19,19 @@
     --ff-success: #10b981;
     --ff-warning: #f59e0b;
     --ff-error: #ef4444;
+    /* Brand palette (single source of truth) */
+    --ff-brand-teal: #02AFB9;
+    --ff-brand-teal-hover: #0296A0;
+    --ff-brand-coral: #F07067;
+    --ff-brand-coral-hover: #D9574E;
+    --ff-brand-peach: #FED8B7;
+    --ff-brand-deep: #0381A8;
+    --ff-brand-cream: #FBFADD;
+    --ff-brand-ink: #0B3542;
   }
 
   [data-theme="light"], .light {
+    color-scheme: light;
     --ff-bg: #ffffff;
     --ff-surface: #f8fafc;
     --ff-surface-2: #f1f5f9;
@@ -50,6 +46,10 @@
     --ff-success: #10b981;
     --ff-warning: #f59e0b;
     --ff-error: #ef4444;
+  }
+
+  [data-theme="dark"] {
+    color-scheme: dark;
   }
 
   [data-theme="light"] body, .light body {
@@ -105,6 +105,7 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     overflow-x: hidden;
+    transition: background-color 0.25s ease, color 0.25s ease;
   }
 
   img, video, canvas, svg {
@@ -131,17 +132,6 @@
   }
   .ff-scrollbar::-webkit-scrollbar-thumb:hover {
     background: var(--ff-border-hover);
-  }
-
-  .ff-gradient-text {
-    background: linear-gradient(135deg, #60a5fa 0%, #818cf8 50%, #c084fc 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  .ff-glow {
-    box-shadow: 0 0 40px rgba(59, 130, 246, 0.15);
   }
 
   .ff-card {
@@ -184,6 +174,134 @@
     background-color: var(--ff-surface-2);
     color: var(--ff-text);
   }
+
+  /* ── Brand theme: professional palette, fully toggle-aware ──
+     #02AFB9 teal (primary) · #F07067 coral (accent) · #FED8B7 peach (tint)
+     #0381A8 deep blue (depth) · #FBFADD cream (page)
+     `.ff-brand` follows the global theme toggle (light = cream page,
+     dark = deep-sea page). */
+  .ff-brand {
+    --ff-bg: #FBFADD;
+    --ff-surface: #FFFFFF;
+    --ff-surface-2: #F7EFDA;
+    --ff-border: #E6DAB9;
+    --ff-border-hover: #02AFB9;
+    --ff-text: #0B3542;
+    --ff-text-muted: #476771;
+    --ff-text-dim: #8399A1;
+    --ff-primary: #02AFB9;
+    --ff-primary-hover: #0296A0;
+    --ff-primary-dim: #D3EFF1;
+    --ff-accent: #F07067;
+    --ff-accent-hover: #D9574E;
+    --ff-accent-dim: #FADCD8;
+  }
+
+  /* Dark mode: deep-sea brand variant so the toggle visibly works */
+  [data-theme="dark"] .ff-brand {
+    --ff-bg: #0A3542;
+    --ff-surface: #0E3D4B;
+    --ff-surface-2: #134A5A;
+    --ff-border: rgba(251, 250, 221, 0.14);
+    --ff-border-hover: #02AFB9;
+    --ff-text: #FBFADD;
+    --ff-text-muted: #9DB9C0;
+    --ff-text-dim: #6E8F97;
+    --ff-primary: #02AFB9;
+    --ff-primary-hover: #2BC5CE;
+    --ff-primary-dim: #134A5A;
+    --ff-accent: #F07067;
+    --ff-accent-hover: #FF857B;
+    --ff-accent-dim: #4A2A28;
+  }
+
+  .ff-brand ::selection {
+    background-color: rgba(2, 175, 185, 0.25);
+  }
+
+  .ff-brand .ff-input:focus {
+    border-color: var(--ff-primary);
+    box-shadow: 0 0 0 3px rgba(2, 175, 185, 0.15);
+  }
+
+  /* Light brand: headings/body authored white-on-dark become ink-on-cream… */
+  .ff-brand h1.text-white,
+  .ff-brand h2.text-white,
+  .ff-brand h3.text-white,
+  .ff-brand h4.text-white,
+  .ff-brand p.text-white,
+  .ff-brand span.text-white,
+  .ff-brand div.text-white,
+  .ff-brand input.text-white,
+  .ff-brand section .text-white,
+  .ff-brand main .text-white,
+  .ff-brand header .text-white,
+  .ff-brand nav .text-white {
+    color: var(--ff-text) !important;
+  }
+  /* …but in dark brand mode white stays white */
+  [data-theme="dark"] .ff-brand h1.text-white,
+  [data-theme="dark"] .ff-brand h2.text-white,
+  [data-theme="dark"] .ff-brand h3.text-white,
+  [data-theme="dark"] .ff-brand h4.text-white,
+  [data-theme="dark"] .ff-brand p.text-white,
+  [data-theme="dark"] .ff-brand span.text-white,
+  [data-theme="dark"] .ff-brand div.text-white,
+  [data-theme="dark"] .ff-brand input.text-white,
+  [data-theme="dark"] .ff-brand section .text-white,
+  [data-theme="dark"] .ff-brand main .text-white,
+  [data-theme="dark"] .ff-brand header .text-white,
+  [data-theme="dark"] .ff-brand nav .text-white {
+    color: #FBFADD !important;
+  }
+  .ff-brand .text-white\/90 { color: rgb(11 53 66 / 0.9) !important; }
+  .ff-brand .text-white\/80 { color: rgb(11 53 66 / 0.8) !important; }
+  .ff-brand .text-white\/70 { color: rgb(11 53 66 / 0.7) !important; }
+  .ff-brand .text-white\/60 { color: rgb(11 53 66 / 0.6) !important; }
+  .ff-brand .text-white\/50 { color: rgb(11 53 66 / 0.5) !important; }
+  .ff-brand .text-white\/40 { color: rgb(11 53 66 / 0.4) !important; }
+  .ff-brand .text-white\/30 { color: rgb(11 53 66 / 0.3) !important; }
+  [data-theme="dark"] .ff-brand .text-white\/90 { color: rgb(251 250 221 / 0.9) !important; }
+  [data-theme="dark"] .ff-brand .text-white\/80 { color: rgb(251 250 221 / 0.8) !important; }
+  [data-theme="dark"] .ff-brand .text-white\/70 { color: rgb(251 250 221 / 0.7) !important; }
+  [data-theme="dark"] .ff-brand .text-white\/60 { color: rgb(251 250 221 / 0.6) !important; }
+  [data-theme="dark"] .ff-brand .text-white\/50 { color: rgb(251 250 221 / 0.5) !important; }
+  [data-theme="dark"] .ff-brand .text-white\/40 { color: rgb(251 250 221 / 0.4) !important; }
+  [data-theme="dark"] .ff-brand .text-white\/30 { color: rgb(251 250 221 / 0.3) !important; }
+  .ff-brand .hover\:text-white:hover { color: var(--ff-primary) !important; }
+
+  /* …except white text sitting on brand color / gradients / dark glass */
+  .ff-brand .bg-\[var\(--ff-primary\)\] .text-white,
+  .ff-brand button .text-white,
+  .ff-brand [class*="bg-gradient"] .text-white,
+  .ff-brand [class*="bg-gradient"].text-white,
+  .ff-brand [class*="bg-black"] .text-white,
+  .ff-brand .ff-dark-block .text-white {
+    color: #FFFFFF !important;
+  }
+  .ff-brand .ff-dark-block .hover\:text-white:hover {
+    color: #FFFFFF !important;
+  }
+
+  /* Legacy neon icon tones → readable tones on cream (light) */
+  .ff-brand .text-emerald-300 { color: #047857 !important; }
+  .ff-brand .text-emerald-400 { color: #059669 !important; }
+  .ff-brand .text-red-400 { color: #DC2626 !important; }
+  .ff-brand .text-blue-400 { color: #0381A8 !important; }
+  .ff-brand .text-amber-400 { color: #B45309 !important; }
+  .ff-brand .text-purple-400 { color: #7C3AED !important; }
+  .ff-brand .text-cyan-400 { color: #0E7490 !important; }
+  .ff-brand .text-teal-400 { color: #0F766E !important; }
+  .ff-brand .text-rose-400 { color: #E11D48 !important; }
+  .ff-brand .text-indigo-400 { color: #4F46E5 !important; }
+
+  /* Deep-sea footer grounds the light page; transparent in dark brand */
+  .ff-brand .ff-dark-block {
+    background-color: #0A3542;
+    --ff-border: rgba(251, 250, 221, 0.14);
+    --ff-text-muted: #9DB9C0;
+    --ff-text-dim: #6E8F97;
+  }
 }
 
 @keyframes ff-fade-in {
@@ -194,14 +312,6 @@
   animation: ff-fade-in 0.3s ease-out;
 }
 
-@keyframes ff-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-.ff-pulse {
-  animation: ff-pulse 1.5s ease-in-out infinite;
-}
-
 @keyframes ff-spin {
   to { transform: rotate(360deg); }
 }
@@ -209,12 +319,433 @@
   animation: ff-spin 0.8s linear infinite;
 }
 
-@keyframes ff-shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+/* ── Studio theme ─────────────────────────────────────────────────────────────
+   A cream-paper/ink/pastel system inspired by modern campaign editors:
+   thick ink borders, hard offset shadows, uppercase mono labels and a
+   display grotesk. Applied to the product surfaces (dashboard + workspace)
+   while the marketing pages keep the teal brand. */
+.ff-display {
+  font-family: 'Space Grotesk', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  letter-spacing: -0.045em;
 }
-.ff-shimmer {
-  background: linear-gradient(90deg, var(--ff-surface) 25%, var(--ff-surface-2) 50%, var(--ff-surface) 75%);
-  background-size: 200% 100%;
-  animation: ff-shimmer 1.5s infinite;
+
+.ff-label {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.ff-studio {
+  --ff-bg: #f3efe4;
+  --ff-surface: #fffdf6;
+  --ff-surface-2: #f8f1df;
+  --ff-border: #171717;
+  --ff-border-hover: #000000;
+  --ff-text: #141414;
+  --ff-text-muted: #4d4a43;
+  --ff-text-dim: #8a857a;
+  --ff-primary: #141414;
+  --ff-primary-hover: #2b2b2b;
+  --ff-primary-dim: #f2d45c;
+  --ff-success: #1f7a5a;
+  --ff-warning: #9a6a00;
+  --ff-error: #b3261e;
+  --ff-studio-yellow: #f2d45c;
+  --ff-studio-mint: #a8e6cf;
+  --ff-studio-lavender: #cdb4f6;
+  --ff-studio-pink: #f6b3c8;
+  --ff-studio-blue: #a9d6e5;
+  --ff-studio-shadow: 4px 4px 0 #171717;
+}
+
+/* Professional dark studio: charcoal layers, low-contrast hairlines and a
+   warm accent. No cream borders or neon hard shadows in dark mode. */
+[data-theme="dark"] .ff-studio {
+  --ff-bg: #0b0d11;
+  --ff-surface: #14171d;
+  --ff-surface-2: #1b1f27;
+  --ff-border: #2a303b;
+  --ff-border-hover: #3b4350;
+  --ff-text: #f5f1e8;
+  --ff-text-muted: #a9a294;
+  --ff-text-dim: #8b8578;
+  --ff-primary: #f2d45c;
+  --ff-primary-hover: #ffe27a;
+  --ff-primary-dim: #3a3218;
+  --ff-success: #4ade80;
+  --ff-warning: #fbbf24;
+  --ff-error: #f87171;
+  --ff-studio-yellow: #f2d45c;
+  --ff-studio-mint: #7dd8b5;
+  --ff-studio-lavender: #b9a4e8;
+  --ff-studio-pink: #e8a2b8;
+  --ff-studio-blue: #8fc7db;
+  --ff-studio-shadow: 0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 32px rgba(0, 0, 0, 0.28);
+}
+
+[data-theme="dark"] .ff-studio .ff-card {
+  border-width: 1px;
+  box-shadow: var(--ff-studio-shadow);
+}
+
+[data-theme="dark"] .ff-studio .ff-btn-primary {
+  border-color: var(--ff-studio-yellow);
+  box-shadow: 3px 3px 0 #000000;
+}
+
+[data-theme="dark"] .ff-studio .ff-btn-primary:hover {
+  box-shadow: 5px 5px 0 #000000;
+}
+
+[data-theme="dark"] .ff-studio .ff-btn-primary:active {
+  box-shadow: 1px 1px 0 #000000;
+}
+
+[data-theme="dark"] .ff-studio .ff-input:focus {
+  box-shadow: 0 0 0 3px rgba(242, 212, 92, 0.18);
+}
+
+[data-theme="dark"] .ff-studio-grid {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+}
+
+[data-theme="dark"] .ff-studio-badge {
+  background: var(--ff-studio-yellow);
+  color: #141414;
+}
+
+.ff-studio .ff-card {
+  border: 1.5px solid var(--ff-border);
+  border-radius: 14px;
+  box-shadow: var(--ff-studio-shadow);
+  background-color: var(--ff-surface);
+}
+
+.ff-studio .ff-input {
+  border: 1.5px solid var(--ff-border);
+  border-radius: 10px;
+  background-color: var(--ff-surface);
+  color: var(--ff-text);
+}
+
+.ff-studio .ff-input:focus {
+  border-color: var(--ff-border);
+  box-shadow: 3px 3px 0 var(--ff-border);
+}
+
+.ff-studio .ff-btn-primary {
+  background-color: var(--ff-primary);
+  color: var(--ff-bg);
+  border: 1.5px solid var(--ff-border);
+  box-shadow: 3px 3px 0 var(--ff-studio-yellow);
+  border-radius: 10px;
+}
+
+[data-theme="dark"] .ff-studio .ff-btn-primary {
+  color: #151515;
+}
+
+.ff-studio .ff-btn-primary:hover {
+  background-color: var(--ff-primary-hover);
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 var(--ff-studio-yellow);
+}
+
+.ff-studio .ff-btn-primary:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--ff-studio-yellow);
+}
+
+.ff-studio .ff-btn-ghost {
+  border: 1.5px solid transparent;
+  border-radius: 10px;
+}
+
+.ff-studio .ff-btn-ghost:hover {
+  border-color: var(--ff-border);
+  background-color: var(--ff-surface-2);
+}
+
+.ff-studio .ff-card-hover:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--ff-border);
+}
+
+.ff-studio-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1.5px solid var(--ff-border);
+  border-radius: 999px;
+  background: var(--ff-studio-yellow, #f2d45c);
+  color: #141414;
+  padding: 0.15rem 0.55rem;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.ff-studio-grid {
+  background-image:
+    linear-gradient(to right, rgba(20, 20, 20, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(20, 20, 20, 0.06) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* ── Landing polish: professional depth, motion and brand glow ─────────────── */
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+.ff-studio {
+  --ff-soft-shadow: 0 1px 2px rgba(20, 20, 20, 0.05), 0 16px 40px -16px rgba(20, 20, 20, 0.18);
+  --ff-soft-shadow-lg: 0 2px 4px rgba(20, 20, 20, 0.05), 0 32px 64px -24px rgba(20, 20, 20, 0.24);
+  --ff-glow-teal: 0 0 0 1px rgba(2, 175, 185, 0.18), 0 12px 40px -12px rgba(2, 175, 185, 0.35);
+}
+
+[data-theme="dark"] .ff-studio {
+  --ff-soft-shadow: 0 1px 0 rgba(255, 255, 255, 0.04), 0 16px 40px -12px rgba(0, 0, 0, 0.5);
+  --ff-soft-shadow-lg: 0 1px 0 rgba(255, 255, 255, 0.05), 0 32px 72px -20px rgba(0, 0, 0, 0.6);
+  --ff-glow-teal: 0 0 0 1px rgba(2, 175, 185, 0.22), 0 16px 56px -16px rgba(2, 175, 185, 0.4);
+}
+
+/* Teal gradient CTA — professional, works on cream and charcoal */
+.ff-cta {
+  background: linear-gradient(135deg, #02afb9 0%, #0381a8 100%);
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(2, 175, 185, 0.35), 0 8px 24px -8px rgba(2, 175, 185, 0.55);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), filter 0.2s ease;
+}
+.ff-cta:hover {
+  filter: brightness(1.07);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(2, 175, 185, 0.35), 0 14px 32px -8px rgba(2, 175, 185, 0.6);
+}
+.ff-cta:active {
+  transform: translateY(0);
+  filter: brightness(0.98);
+}
+
+/* Gradient ink for headline accents */
+.ff-gradient-text {
+  background: linear-gradient(120deg, #02afb9 10%, #0381a8 60%, #0b3542 110%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+[data-theme="dark"] .ff-studio .ff-gradient-text {
+  background: linear-gradient(120deg, #2bc5ce 10%, #7dd8b5 90%);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+/* Ambient hero light */
+.ff-hero-glow {
+  background: radial-gradient(closest-side, rgba(2, 175, 185, 0.16), rgba(2, 175, 185, 0.05) 55%, transparent 75%);
+  filter: blur(12px);
+}
+[data-theme="dark"] .ff-hero-glow {
+  background: radial-gradient(closest-side, rgba(2, 175, 185, 0.2), rgba(3, 129, 168, 0.07) 55%, transparent 78%);
+}
+
+/* Soft halo behind the product window */
+.ff-window-glow {
+  background: radial-gradient(closest-side, rgba(2, 175, 185, 0.14), transparent 72%);
+  filter: blur(16px);
+}
+[data-theme="dark"] .ff-window-glow {
+  background: radial-gradient(closest-side, rgba(2, 175, 185, 0.16), transparent 75%);
+}
+
+/* Hero entrance: staggered rise-in on load */
+@keyframes ff-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.ff-enter {
+  animation: ff-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Scroll reveal (driven by IntersectionObserver) */
+.ff-reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+.ff-reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* Gentle float for badges */
+@keyframes ff-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+.ff-float {
+  animation: ff-float 4.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ff-enter,
+  .ff-float {
+    animation: none;
+  }
+  .ff-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* ── Landing dark mode: midnight-teal premium theme ──────────────────────────
+   Scoped to the landing page (ff-landing) so product surfaces elsewhere keep
+   the studio charcoal look. Deeper blue-black base, teal-tinted hairlines and
+   surfaces, glowing CTAs and glassy accents. */
+[data-theme="dark"] .ff-studio.ff-landing {
+  --ff-bg: #04070b;
+  --ff-surface: #0a0f16;
+  --ff-surface-2: #0f1621;
+  --ff-border: rgba(140, 200, 210, 0.1);
+  --ff-border-hover: rgba(2, 175, 185, 0.5);
+  --ff-text: #eaf4f4;
+  --ff-text-muted: #93a8b0;
+  --ff-text-dim: #5f7680;
+  --ff-primary: #02afb9;
+  --ff-primary-hover: #2bc5ce;
+  --ff-primary-dim: rgba(2, 175, 185, 0.14);
+  --ff-soft-shadow: 0 0 0 1px rgba(125, 216, 181, 0.05), 0 24px 64px -24px rgba(0, 0, 0, 0.75);
+  --ff-soft-shadow-lg: 0 0 0 1px rgba(125, 216, 181, 0.07), 0 32px 80px -28px rgba(0, 0, 0, 0.85);
+  --ff-glow-teal: 0 0 0 1px rgba(2, 175, 185, 0.25), 0 16px 56px -16px rgba(2, 175, 185, 0.45);
+}
+
+/* CTAs glow harder at night */
+[data-theme="dark"] .ff-landing .ff-cta {
+  box-shadow:
+    0 0 0 1px rgba(2, 175, 185, 0.35),
+    0 12px 32px -10px rgba(2, 175, 185, 0.6),
+    0 0 28px -6px rgba(2, 175, 185, 0.4);
+}
+
+/* Eyebrow pill turns into a teal glass chip */
+[data-theme="dark"] .ff-landing .ff-eyebrow {
+  background: rgba(2, 175, 185, 0.08);
+  border-color: rgba(2, 175, 185, 0.3);
+  box-shadow: 0 0 24px -10px rgba(2, 175, 185, 0.55);
+}
+
+/* Prompt bar: glass with a luminous focus ring */
+[data-theme="dark"] .ff-landing .ff-prompt {
+  background: rgba(10, 15, 22, 0.85);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 0 0 1px rgba(140, 200, 210, 0.07), 0 24px 64px -24px rgba(0, 0, 0, 0.8);
+}
+[data-theme="dark"] .ff-landing .ff-prompt:focus-within {
+  border-color: rgba(2, 175, 185, 0.55);
+  box-shadow: var(--ff-glow-teal);
+}
+
+/* Product window picks up a teal halo */
+[data-theme="dark"] .ff-landing .ff-window {
+  border-color: rgba(2, 175, 185, 0.2);
+  box-shadow: var(--ff-soft-shadow-lg), 0 0 90px -40px rgba(2, 175, 185, 0.55);
+}
+
+/* Compile badge: teal glass instead of studio yellow */
+[data-theme="dark"] .ff-landing .ff-compile-badge {
+  background: rgba(2, 175, 185, 0.16);
+  border-color: rgba(2, 175, 185, 0.45);
+  box-shadow: 0 0 28px -8px rgba(2, 175, 185, 0.6);
+  backdrop-filter: blur(8px);
+}
+[data-theme="dark"] .ff-landing .ff-compile-badge svg,
+[data-theme="dark"] .ff-landing .ff-compile-badge span {
+  color: #a8e6cf;
+}
+
+/* Proof strip: faint teal sheen from above */
+[data-theme="dark"] .ff-landing .ff-proof {
+  background:
+    radial-gradient(ellipse 70% 120% at 50% -20%, rgba(2, 175, 185, 0.07), transparent 70%),
+    var(--ff-surface);
+}
+
+/* CTA panel: layered teal light on deep glass */
+[data-theme="dark"] .ff-landing .ff-cta-panel {
+  background:
+    radial-gradient(ellipse 55% 70% at 85% 15%, rgba(2, 175, 185, 0.14), transparent 70%),
+    radial-gradient(ellipse 45% 60% at 8% 90%, rgba(3, 129, 168, 0.12), transparent 70%),
+    linear-gradient(165deg, #0a0f16 0%, #0c1420 100%);
+  border-color: rgba(2, 175, 185, 0.28);
+  box-shadow:
+    0 0 0 1px rgba(2, 175, 185, 0.08),
+    0 32px 80px -28px rgba(0, 0, 0, 0.85),
+    0 0 80px -36px rgba(2, 175, 185, 0.45);
+}
+
+/* Dark-only ambient orbs (invisible on the cream light theme) */
+.ff-orb {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  opacity: 0;
+  filter: blur(56px);
+}
+.ff-orb-coral { background: radial-gradient(circle, rgba(240, 112, 103, 0.17), transparent 70%); }
+.ff-orb-lavender { background: radial-gradient(circle, rgba(185, 164, 232, 0.15), transparent 70%); }
+.ff-orb-deep { background: radial-gradient(circle, rgba(3, 129, 168, 0.2), transparent 70%); }
+[data-theme="dark"] .ff-landing .ff-orb {
+  opacity: 1;
+}
+
+/* Boosted ambient light in dark mode */
+[data-theme="dark"] .ff-landing .ff-hero-glow {
+  background: radial-gradient(closest-side, rgba(2, 175, 185, 0.26), rgba(3, 129, 168, 0.1) 55%, transparent 78%);
+}
+[data-theme="dark"] .ff-landing .ff-window-glow {
+  background: radial-gradient(closest-side, rgba(2, 175, 185, 0.2), rgba(3, 129, 168, 0.08) 55%, transparent 78%);
+  filter: blur(20px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="dark"] .ff-landing .ff-orb {
+    transition: none;
+  }
+}
+
+/* ── Dock navbar accents ───────────────────────────────────────────────────── */
+.dock .ff-dock-start .dock-face {
+  background: linear-gradient(135deg, #02afb9 0%, #0381a8 100%);
+  color: #ffffff;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 4px 14px -4px rgba(2, 175, 185, 0.65);
+}
+.dock .ff-dock-start .dock-face:active,
+.dock .ff-dock-start[data-open] .dock-face {
+  filter: brightness(0.92);
 }

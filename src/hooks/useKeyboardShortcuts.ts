@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import { useWorkspaceStore } from '@/stores/workspace.store';
 
 export function useKeyboardShortcuts() {
-  const toggleSidebar = useWorkspaceStore((s) => s.toggleSidebar);
   const setCommandPaletteOpen = useWorkspaceStore((s) => s.setCommandPaletteOpen);
   const setActiveView = useWorkspaceStore((s) => s.setActiveView);
 
@@ -17,10 +16,11 @@ export function useKeyboardShortcuts() {
       if (cmd && e.key === 'p' && !e.shiftKey) {
         e.preventDefault();
         setActiveView('files');
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent('ff:focus-file-search')), 100);
       }
-      if (cmd && e.key === 'b') {
+      if (cmd && e.key === 's') {
         e.preventDefault();
-        toggleSidebar();
+        window.dispatchEvent(new CustomEvent('ff:save-file'));
       }
       if (cmd && e.shiftKey && e.key === 'P') {
         e.preventDefault();
@@ -30,5 +30,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [toggleSidebar, setCommandPaletteOpen, setActiveView]);
+  }, [setCommandPaletteOpen, setActiveView]);
 }

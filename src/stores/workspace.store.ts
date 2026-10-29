@@ -1,10 +1,9 @@
 import { create } from 'zustand';
 
-type WorkspaceView = 'ai-builder' | 'preview' | 'files' | 'components' | 'theme' | 'dependencies' | 'connectors' | 'code' | 'terminal' | 'problems' | 'git' | 'versions' | 'settings' | 'deploy' | 'export';
+type WorkspaceView = 'ai-builder' | 'preview' | 'files' | 'dependencies' | 'code' | 'terminal' | 'versions' | 'settings' | 'export';
 
 interface WorkspaceState {
   activeView: WorkspaceView;
-  sidebarCollapsed: boolean;
   bottomPanelOpen: boolean;
   bottomPanelTab: 'terminal' | 'problems' | 'ai-activity' | 'build';
   activeFile: string | null;
@@ -12,11 +11,8 @@ interface WorkspaceState {
   previewDevice: string;
   previewOrientation: 'portrait' | 'landscape';
   commandPaletteOpen: boolean;
-  inspectorOpen: boolean;
-  selectedWidget: string | null;
 
   setActiveView: (view: WorkspaceView) => void;
-  toggleSidebar: () => void;
   setBottomPanelOpen: (open: boolean) => void;
   setBottomPanelTab: (tab: WorkspaceState['bottomPanelTab']) => void;
   openFile: (path: string) => void;
@@ -24,25 +20,21 @@ interface WorkspaceState {
   setPreviewDevice: (device: string) => void;
   setPreviewOrientation: (orientation: 'portrait' | 'landscape') => void;
   setCommandPaletteOpen: (open: boolean) => void;
-  setInspectorOpen: (open: boolean) => void;
-  setSelectedWidget: (widget: string | null) => void;
+  /** Clear per-project UI state (open tabs, active file/view) on project switch. */
+  resetWorkspace: () => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   activeView: 'ai-builder',
-  sidebarCollapsed: false,
-  bottomPanelOpen: true,
+  bottomPanelOpen: false,
   bottomPanelTab: 'terminal',
   activeFile: null,
   openTabs: [],
   previewDevice: 'iPhone 15 Pro',
   previewOrientation: 'portrait',
   commandPaletteOpen: false,
-  inspectorOpen: true,
-  selectedWidget: null,
 
   setActiveView: (view) => set({ activeView: view }),
-  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setBottomPanelOpen: (open) => set({ bottomPanelOpen: open }),
   setBottomPanelTab: (tab) => set({ bottomPanelTab: tab, bottomPanelOpen: true }),
   openFile: (path) => set((s) => ({
@@ -60,6 +52,5 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setPreviewDevice: (device) => set({ previewDevice: device }),
   setPreviewOrientation: (orientation) => set({ previewOrientation: orientation }),
   setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
-  setInspectorOpen: (open) => set({ inspectorOpen: open }),
-  setSelectedWidget: (widget) => set({ selectedWidget: widget }),
+  resetWorkspace: () => set({ activeFile: null, openTabs: [], activeView: 'ai-builder' }),
 }));
