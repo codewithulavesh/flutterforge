@@ -13,6 +13,8 @@ import { DashboardPage } from '@/pages/DashboardPage';
 import { WorkspacePage } from '@/pages/WorkspacePage';
 import { ToastContainer } from '@/components/ui/Toast';
 import { FullPageSpinner } from '@/components/ui/Spinner';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { NotFoundPage } from '@/pages/NotFoundPage';
 import { DesktopMenuBridge } from '@/components/DesktopMenuBridge';
 
 export default function App() {
@@ -97,17 +99,20 @@ export default function App() {
   if (!initialized) return <FullPageSpinner label="Loading FlutterForge..." />;
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
-        <Route path="/signup" element={<PublicOnlyRoute><SignupPage /></PublicOnlyRoute>} />
-        <Route path="/forgot-password" element={<PublicOnlyRoute><ForgotPasswordPage /></PublicOnlyRoute>} />
-        <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-        <Route path="/project/:projectId" element={<ProtectedRoute><WorkspacePage /></ProtectedRoute>} />
-      </Routes>
-      <DesktopMenuBridge />
-      <ToastContainer />
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
+          <Route path="/signup" element={<PublicOnlyRoute><SignupPage /></PublicOnlyRoute>} />
+          <Route path="/forgot-password" element={<PublicOnlyRoute><ForgotPasswordPage /></PublicOnlyRoute>} />
+          <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+          <Route path="/project/:projectId" element={<ProtectedRoute><WorkspacePage /></ProtectedRoute>} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Routes>
+        <DesktopMenuBridge />
+        <ToastContainer />
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }

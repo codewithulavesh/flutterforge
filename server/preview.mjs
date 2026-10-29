@@ -6,6 +6,7 @@ import net from 'node:net';
 import { createHash } from 'node:crypto';
 import { materializeFiles, safeRelativePath } from './harness/workspace.mjs';
 import { findFlutter } from './harness/flutter.mjs';
+import { sanitizeSdkConstraint, sanitizeFlutterConstraint, fixInvalidPlainScalars, getToolchainVersions } from './harness/pubspecFix.mjs';
 
 const MAX_LOG_LINES = 500;
 const BUILD_TIMEOUT_MS = Number(process.env.FLUTTERFORGE_PREVIEW_TIMEOUT_MS || 15 * 60 * 1000);
@@ -362,6 +363,26 @@ export function createPreviewService(options = {}) {
               await fs.writeFile(pubspecPath, sanitized, 'utf8');
             }
           }
+        }
+        // Clamp impossible toolchain constraints and repair invalid YAML
+        // (LLMs quote nothing: `description: A timer: 25 minutes` is fatal)
+        // before pub get, which fails before a single Dart error is shown.
+        try {
+          const scalarFix = fixInvalidPlainScalars(pubspecContent);
+          if (scalarFix.changed) pubspecContent = scalarFix.content;
+          const toolchain = await getToolchainVersions();
+          const sdkFix = sanitizeSdkConstraint(pubspecContent, { dartVersion: toolchain.dartVersion });
+          if (sdkFix.changed) pubspecContent = sdkFix.content;
+          const flutterFix = sanitizeFlutterConstraint(pubspecContent, { flutterVersion: toolchain.flutterVersion });
+          if (flutterFix.changed) pubspecContent = flutterFix.content;
+          for (const note of [scalarFix.note, sdkFix.note, flutterFix.note]) {
+            if (note) log(`[preview] ${note}`);
+          }
+          if (scalarFix.changed || sdkFix.changed || flutterFix.changed) {
+            await fs.writeFile(pubspecPath, pubspecContent, 'utf8');
+          }
+        } catch (fixError) {
+          log(`[preview] pubspec constraint check skipped: ${fixError?.message || fixError}`);
         }
         const pubspecHash = createHash('sha256').update(pubspecContent).digest('hex');
         const hashFile = path.join(directory, '.flutterforge-pubspec-hash');

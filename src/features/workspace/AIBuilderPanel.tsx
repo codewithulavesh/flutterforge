@@ -835,19 +835,23 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
   }, [input, page]);
 
   // Wizard hand-off: fire the first prompt once per project/conversation.
+  // The timer is cancelled by a dep change (e.g. a second loadConversation
+  // settling) — unlatch so the next run can reschedule, or the wizard
+  // hand-off would silently never fire.
   useEffect(() => {
     if (!currentProject || !conversation || autoStarted.current || messages.length > 0) return;
     const prompt = navState?.richPrompt?.trim() || navState?.initialPrompt?.trim();
-    if (!prompt || autoTimer.current !== null) return;
-    autoStarted.current = true;
+    if (!prompt) return;
     autoTimer.current = window.setTimeout(() => {
       autoTimer.current = null;
+      autoStarted.current = true;
       void handleSend(prompt, { isInitialGeneration: true });
     }, 350);
     return () => {
       if (autoTimer.current !== null) {
         window.clearTimeout(autoTimer.current);
         autoTimer.current = null;
+        autoStarted.current = false;
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

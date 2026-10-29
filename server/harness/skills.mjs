@@ -44,6 +44,12 @@ Include all four states explicitly:
 - Add \`Semantics\` labels to icon-only buttons.
 - Support text scaling; avoid hard-coded heights around text.
 - Use \`const\` constructors and \`Key\`s for list items.
+
+## API compatibility (current stable Flutter — verify names against the SDK)
+- Theme slots take DATA classes, not widget-theme classes: \`cardTheme: CardThemeData(...)\`, \`dialogTheme: DialogThemeData(...)\`, \`tabBarTheme: TabBarThemeData(...)\`. \`CardTheme(...)\` / \`DialogTheme(...)\` inside \`ThemeData\` no longer compile.
+- \`ColorScheme\` has NO \`success\` / \`onSuccess\` members — use a custom \`ColorScheme.fromSeed(...)\` extension or explicit colors (\`Colors.green.shade600\`).
+- ChangeNotifier providers must \`extends ChangeNotifier\` (not \`with ChangeNotifier\` on a non-mixin class) so \`ChangeNotifierProvider<T>\` type bounds hold.
+- pubspec.yaml is YAML: quote any value containing \`": "\`. Never pin \`environment.sdk\` above the installed Dart SDK.
 `;
 
 const ARCHITECTURE = `---

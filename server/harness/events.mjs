@@ -5,6 +5,7 @@ import {
   languageForPath,
   snapshotFiles,
 } from './workspace.mjs';
+import { findInvalidPlainScalar } from './pubspecFix.mjs';
 
 const TOTAL_STEPS = 7;
 const MAX_THOUGHT_CHARS = 600;
@@ -357,6 +358,17 @@ export function validateProject(files) {
       message: 'pubspec.yaml is missing; the project cannot build.',
       autoFixAvailable: false,
     });
+  } else {
+    const badScalar = findInvalidPlainScalar(pubspec);
+    if (badScalar) {
+      issues.push({
+        filePath: 'pubspec.yaml',
+        severity: 'error',
+        code: 'INVALID_PUBSPEC_YAML',
+        message: `pubspec.yaml is not valid YAML (unquoted ":" in a value): ${badScalar.trim().slice(0, 80)}`,
+        autoFixAvailable: true,
+      });
+    }
   }
   if (!byPath.get('lib/main.dart')) {
     issues.push({

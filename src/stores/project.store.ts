@@ -14,6 +14,21 @@ import { usePreviewStore } from './preview.store';
 import { useWorkspaceStore } from './workspace.store';
 import { useTerminalStore } from './terminal.store';
 
+/** One in-flight promise per key — collapsing concurrent duplicate calls
+ *  (React StrictMode double-mounts, double navigations) prevents races like
+ *  two `loadConversation` runs inserting two chat conversations. */
+const inFlightCalls = new Map<string, Promise<unknown>>();
+
+function ensureSingleFlight<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const existing = inFlightCalls.get(key);
+  if (existing) return existing as Promise<T>;
+  const promise = run().finally(() => {
+    inFlightCalls.delete(key);
+  });
+  inFlightCalls.set(key, promise);
+  return promise;
+}
+
 export interface SendMessageOptions {
   /** Explicit initial-generation flag (wizard/first prompt). Falls back to heuristics when omitted. */
   isInitialGeneration?: boolean;
@@ -250,7 +265,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     return true;
   },
 
-  loadProject: async (id) => {
+  loadProject: (id) => ensureSingleFlight(`project:${id}`, async () => {
     // Clear the previous project's state first so switching projects never
     // flashes (or previews from) stale files/messages of another app.
     // Also reset editor tabs: openTabs/activeFile otherwise leak across
@@ -285,7 +300,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     await get().loadVersions(id);
     await get().loadBuilds(id);
     await get().loadDeployments(id);
-  },
+  }),
 
   loadFiles: async (projectId) => {
     const { data, error } = await supabase
@@ -401,7 +416,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ conversation: data as AIConversation, messages: [] });
   },
 
-  loadConversation: async (projectId) => {
+  loadConversation: (projectId) => ensureSingleFlight(`conv:${projectId}`, () => (async () => {
     const { data: conv } = await supabase
       .from('ai_conversations')
       .select('*')
@@ -419,14 +434,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         .order('created_at', { ascending: true });
       set({ messages: (msgs as AIMessage[]) ?? [] });
     } else {
-      const { data: newConv } = await supabase
+      const { data: newConv, error } = await supabase
         .from('ai_conversations')
         .insert({ project_id: projectId, title: 'New Conversation' })
         .select('*')
         .single();
+      if (error) throw new Error(error.message);
       set({ conversation: newConv as AIConversation, messages: [] });
     }
-  },
+  })()),
 
   sendMessage: async (projectId, content, onProgress, opts) => {
     let conv = get().conversation;

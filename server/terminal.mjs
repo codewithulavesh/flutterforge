@@ -1,8 +1,10 @@
 import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { getProjectWorkspace } from './harness/run.mjs';
 import { findFlutter } from './harness/flutter.mjs';
 import { runCommand } from './harness/dsh.mjs';
 import { resolveInside } from './harness/workspace.mjs';
+import { fixInvalidPlainScalars, sanitizeSdkConstraint, sanitizeFlutterConstraint, getToolchainVersions } from './harness/pubspecFix.mjs';
 
 const ALLOWED = new Set(['flutter', 'dart', 'ls', 'pwd', 'cat', 'git', 'help', 'clear']);
 const MAX_OUTPUT = 32_000;
@@ -49,6 +51,33 @@ export async function runTerminalCommand(projectId, command) {
 
   const workspace = getProjectWorkspace(projectId);
   await fs.mkdir(workspace, { recursive: true });
+
+  // Self-heal an LLM-written pubspec before any command that would fail on
+  // invalid YAML (analyze/pub get): quote plain scalars containing ": " and
+  // clamp impossible toolchain constraints — same rules as the preview build.
+  if (executable === 'flutter' || executable === 'dart') {
+    try {
+      const pubspecPath = path.join(workspace, 'pubspec.yaml');
+      const content = await fs.readFile(pubspecPath, 'utf8');
+      const scalarFix = fixInvalidPlainScalars(content);
+      let healed = scalarFix.content;
+      let notes = [scalarFix.note];
+      if (healed !== content) {
+        const versions = await getToolchainVersions();
+        const sdkFix = sanitizeSdkConstraint(healed, { dartVersion: versions.dartVersion });
+        if (sdkFix.changed) healed = sdkFix.content;
+        const flutterFix = sanitizeFlutterConstraint(healed, { flutterVersion: versions.flutterVersion });
+        if (flutterFix.changed) healed = flutterFix.content;
+        notes = [scalarFix.note, sdkFix.note, flutterFix.note];
+        await fs.writeFile(pubspecPath, healed, 'utf8');
+      }
+      for (const note of notes) {
+        if (note) console.log(`[terminal] ${note}`);
+      }
+    } catch {
+      // No pubspec (or unreadable) — nothing to heal.
+    }
+  }
 
   if (executable === 'pwd') {
     return { statusCode: 200, body: { output: `${workspace}\n`, code: 0 } };

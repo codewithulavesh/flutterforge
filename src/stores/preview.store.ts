@@ -167,7 +167,7 @@ export const usePreviewStore = create<PreviewState>((set, get) => ({
       const res = await fetch(`${API_BASE}/api/preview/project/${projectId}/status`);
       if (!res.ok) return null;
       const data = await parseJsonResponse(res);
-      if (!data || !data.status) return null;
+      if (!data || !data.status || data.status === 'none') return null;
 
       const session: PreviewSession = {
         sessionId: data.sessionId,

@@ -400,7 +400,9 @@ async function handleRequest(req, res) {
   if (previewProjectStatus && req.method === 'GET') {
     const status = preview.statusForProject(decodeURIComponent(previewProjectStatus[1]));
     if (!status) {
-      sendJson(res, 404, { error: 'No preview session for this project.' });
+      // "No session yet" is a normal state (every fresh project polls this on
+      // entry) — answer 200 so the browser doesn't spam console errors.
+      sendJson(res, 200, { ok: true, status: 'none' });
       return;
     }
     sendJson(res, 200, status);
