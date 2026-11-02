@@ -9,10 +9,11 @@ import { classifyChatIntent } from '@/agent/chatIntent';
 import { answerGeneralQuestion } from '@/agent/chatAnswer';
 import { ChatContextHandler } from '@/agent/chatContext';
 import { FlutterSupabaseAgent, AgentContextBuilder, AgentPlanner, MultiFileCodeGenerator, keyPool } from '@/agent';
-import { HarnessClient, runFlutterSupabaseAgentHarness } from '@/agent/harnessClient';
+import { HarnessClient, runFlutterSupabaseAgentHarness, type SSEFileReadyEvent } from '@/agent/harnessClient';
 import { usePreviewStore } from './preview.store';
 import { useWorkspaceStore } from './workspace.store';
 import { useTerminalStore } from './terminal.store';
+import { useActivityStore } from './activity.store';
 
 /** One in-flight promise per key — collapsing concurrent duplicate calls
  *  (React StrictMode double-mounts, double navigations) prevents races like
@@ -41,7 +42,28 @@ export interface SendMessageOptions {
   /** Typed AgentEvent callback — receives structured events from the harness engine
    *  (includes node name, phase, step_number). Used by AIBuilderPanel for direct step
    *  advancement without keyword matching. Falls back to onProgress for other paths. */
-  onEvent?: (event: { message: string; node?: string; phase?: string; step_number?: number; thought?: string }) => void;
+  onEvent?: (event: {
+    message: string;
+    node?: string;
+    phase?: string;
+    step_number?: number;
+    stepNumber?: number;
+    totalSteps?: number;
+    thought?: string;
+    plan?: any;
+    validationReport?: any;
+    generatedFiles?: any[];
+    detail?: string;
+    kind?: string;
+    tool?: string;
+    toolInput?: unknown;
+    toolCallId?: string;
+    status?: string;
+    filePath?: string;
+    timestamp?: string;
+  }) => void;
+  /** Raw harness file artefact as it is written to the workspace. */
+  onFile?: (file: SSEFileReadyEvent) => void;
   /** AbortSignal from the UI Stop button — cancels the backend stream / LLM calls. */
   signal?: AbortSignal;
   /** Fast/lightning or quality/ultra model for this request. Defaults to fast. */
@@ -50,6 +72,8 @@ export interface SendMessageOptions {
   attachedFiles?: string[];
   /** Receives each assistant text chunk while a chat-only answer streams. */
   onToken?: (token: string) => void;
+  /** Called when a chat answer switches credentials/models after an error. */
+  onRetry?: (message: string) => void;
 }
 
 export interface SendMessageResult {
@@ -295,11 +319,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
     set({ currentProject: data as Project, loading: false });
     await get().loadFiles(id);
-    await get().loadConversation(id);
-    await get().loadDependencies(id);
-    await get().loadVersions(id);
-    await get().loadBuilds(id);
-    await get().loadDeployments(id);
+    await Promise.allSettled([
+      get().loadConversation(id),
+      get().loadDependencies(id),
+      get().loadVersions(id),
+      get().loadBuilds(id),
+      get().loadDeployments(id),
+    ]);
   }),
 
   loadFiles: async (projectId) => {
@@ -494,11 +520,22 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     };
     set((state) => ({ messages: [...state.messages, userMessage] }));
 
-    await supabase.from('ai_messages').insert({
-      conversation_id: conv.id,
-      role: 'user',
-      content,
-    });
+    // Persist immediately, but don't make a network round-trip sit in front of
+    // the generation request. The model run usually gives this insert plenty
+    // of time to finish; we await it before saving the assistant reply so the
+    // conversation stays ordered.
+    const userMessageSaved = (async () => {
+      try {
+        const { error } = await supabase.from('ai_messages').insert({
+          conversation_id: conv.id,
+          role: 'user',
+          content,
+        });
+        if (error) console.warn('Could not persist user message:', error.message);
+      } catch (error) {
+        console.warn('Could not persist user message:', error);
+      }
+    })();
 
     const project = get().currentProject;
     if (!project) {
@@ -522,20 +559,23 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         question: content,
         attachedFiles: opts?.attachedFiles ?? [],
       });
-      const envKey =
-        (typeof import.meta !== 'undefined' && (import.meta.env?.VITE_OPENROUTER_API_KEY as string | undefined)) ||
-        '';
-      if (envKey) keyPool.addKey(envKey);
       const reply = await answerGeneralQuestion(content, {
         projectName: project.name,
         projectSummary: chatContext.summary,
         history: chatContext.history,
-        apiKey: safePoolKey() || envKey || '',
+        apiKey: safePoolKey() || '',
+        model: opts?.modelPreference === 'quality'
+          ? 'nvidia/nemotron-3-ultra-550b-a55b:free'
+          : 'nvidia/nemotron-3.5-lightning:free',
         onProgress,
         onToken: opts?.onToken,
+        onRetry: opts?.onRetry,
         signal: opts?.signal,
       });
-      const chatPrompts = generateNextActionPrompts(content, []);
+      const projectUsesSupabase = get().files.some((file) => !file.is_directory && (
+        file.path.startsWith('supabase/') || /supabase_flutter|Supabase\.initialize|SupabaseService/.test(file.content)
+      ));
+      const chatPrompts = generateNextActionPrompts(content, [], projectUsesSupabase);
       const chatMessage: AIMessage = {
         id: crypto.randomUUID(),
         conversation_id: conv.id,
@@ -547,6 +587,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         created_at: new Date().toISOString(),
       };
       set((state) => ({ messages: [...state.messages, chatMessage] }));
+      await userMessageSaved;
       await supabase.from('ai_messages').insert({
         conversation_id: conv.id,
         role: 'assistant',
@@ -590,6 +631,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       project.platform || 'web',
       project.description || '',
       opts?.modelPreference ?? 'fast',
+      opts?.onFile,
     );
     // Belt-and-braces: AI output sometimes carries a stale/copied pubspec
     // name — pin it to this project's unique id before saving.
@@ -674,6 +716,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     };
     set((state) => ({ messages: [...state.messages, assistantMessage] }));
 
+    await userMessageSaved;
     await supabase.from('ai_messages').insert({
       conversation_id: conv.id,
       role: 'assistant',
@@ -1028,19 +1071,33 @@ function shortModel(modelId: string): string {
  * instead of hanging the UI at 0% forever.
  */
 function runTier0WithTimeout<T>(
-  run: () => Promise<T>,
+  run: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
   onProgress?: (msg: string) => void,
+  parentSignal?: AbortSignal,
 ): Promise<T> {
+  const controller = new AbortController();
+  let rejectAborted: ((error: Error) => void) | null = null;
+  const aborted = new Promise<never>((_, reject) => {
+    rejectAborted = reject;
+  });
+  const abortFromParent = () => {
+    controller.abort();
+    rejectAborted?.(new Error('Generation cancelled by user'));
+  };
+  if (parentSignal?.aborted) abortFromParent();
+  else parentSignal?.addEventListener('abort', abortFromParent, { once: true });
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       onProgress?.(`Harness engine stalled (${Math.round(timeoutMs / 1000)}s without finishing) — falling back...`);
+      controller.abort();
       reject(new Error(`Harness engine timed out after ${timeoutMs}ms`));
     }, timeoutMs);
   });
-  return Promise.race([run(), timeout]).finally(() => {
+  return Promise.race([run(controller.signal), timeout, aborted]).finally(() => {
     if (timer) clearTimeout(timer);
+    parentSignal?.removeEventListener('abort', abortFromParent);
   });
 }
 
@@ -1125,12 +1182,15 @@ function watchPreviewBuild(projectId: string, sessionId: string, round = 0): voi
 
 async function repairFailedBuild(projectId: string, logs: string[], round = 1, signal?: AbortSignal): Promise<void> {
   const terminal = useTerminalStore.getState();
+  const activity = useActivityStore.getState();
+  activity.begin(projectId, `Repair preview build (round ${round})`, false);
   const compileErrors = logs.filter((line) => /error:|Error:|Failed to compile|because|not found|undefined|Expected|Too many|Invalid/i.test(line));
   const tail = [...compileErrors.slice(-20), ...logs.slice(-30)].join('\n').slice(-7000);
   terminal.addLine({
     type: 'error',
     content: `✗ Preview build failed — repair attempt ${round}/${MAX_AUTO_REPAIRS} is reading the compile errors…`,
   });
+  activity.ingestProgress(`Preview build failed — repair attempt ${round}/${MAX_AUTO_REPAIRS}`);
   try {
     const store = useProjectStore.getState();
     if (!store.currentProject || store.currentProject.id !== projectId) {
@@ -1141,12 +1201,26 @@ async function repairFailedBuild(projectId: string, logs: string[], round = 1, s
     await useProjectStore.getState().sendMessage(
       projectId,
       `The Flutter preview build FAILED (automatic repair attempt ${round}/${MAX_AUTO_REPAIRS}). Fix the project so it compiles and the preview loads.\n\nCompile errors and log tail:\n${tail || '(no logs captured)'}\n\nRules:\n- Read the failing file(s) and fix the actual root cause; do not rewrite unrelated files.\n- Run flutter analyze or dart analyze when useful.\n- Keep every file complete and compilable; no TODOs or placeholders.\n- If the same error repeats, change approach instead of repeating the same edit.`,
-      (message) => terminal.addLine({ type: 'output', content: `  [repair ${round}] ${message}` }),
-      { isInitialGeneration: false, autoRepairBuild: true, isRepair: true, repairRound: round, signal },
+      (message) => {
+        terminal.addLine({ type: 'output', content: `  [repair ${round}] ${message}` });
+        activity.ingestProgress(message);
+      },
+      {
+        isInitialGeneration: false,
+        autoRepairBuild: true,
+        isRepair: true,
+        repairRound: round,
+        signal,
+        onEvent: (event) => activity.ingestAgent(event),
+        onFile: (file) => activity.ingestFile(file),
+      },
     );
     terminal.addLine({ type: 'success', content: '✓ Repair pass complete — preview rebuilding' });
+    activity.end('success', 'Repair pass complete — preview rebuilding');
   } catch (e) {
-    terminal.addLine({ type: 'error', content: `✗ Auto-repair failed: ${(e as Error).message}` });
+    const message = (e as Error).message;
+    terminal.addLine({ type: 'error', content: `✗ Auto-repair failed: ${message}` });
+    activity.end('error', `Repair failed: ${message}`);
   }
 }
 
@@ -1164,6 +1238,7 @@ async function requestAIGeneration(
   platform = 'web',
   projectDescription = '',
   modelPreference: 'fast' | 'quality' = 'fast',
+  onFile?: (file: SSEFileReadyEvent) => void,
 ): Promise<FileChange[]> {
   // Model override: set VITE_AGENT_MODEL to pin a specific OpenRouter model.
   // Free-first default so free-tier keys work everywhere (paid users pin via env).
@@ -1180,8 +1255,8 @@ async function requestAIGeneration(
   // Tier-0 timeout per attempt. The fast model normally finishes in under two
   // minutes; a larger/quality retry gets more room. The Stop button still
   // aborts immediately through the request signal.
-  const FAST_ATTEMPT_TIMEOUT_MS = 240000;
-  const QUALITY_ATTEMPT_TIMEOUT_MS = 480000;
+  const FAST_ATTEMPT_TIMEOUT_MS = 90000;
+  const QUALITY_ATTEMPT_TIMEOUT_MS = 180000;
 
   // TIER 0: DeepSeek Harness engine (local Node service, SSE streaming)
   try {
@@ -1190,10 +1265,6 @@ async function requestAIGeneration(
     if (signal?.aborted) throw new Error('Generation cancelled by user');
     if (isUp) {
       onProgress?.(`Harness engine active — ${shortModel(agentModel)} via DeepSeek Harness...`);
-      const envKey =
-        (typeof import.meta !== 'undefined' && (import.meta.env?.VITE_OPENROUTER_API_KEY as string | undefined)) ||
-        '';
-      if (envKey) keyPool.addKey(envKey);
       const latestUserPrompt = messages.filter((m) => m.role === 'user').pop()?.content || 'Create Flutter application';
       const appId = generateUniqueAppId(projectName, projectId);
       const promptText = `${latestUserPrompt} ${projectDescription} ${projectName}`;
@@ -1239,7 +1310,7 @@ async function requestAIGeneration(
       for (let attempt = 0; attempt < attempts; attempt++) {
         if (signal?.aborted) throw new Error('Generation cancelled by user');
         const useManagedAccount = attempt >= openRouterAttempts;
-        const apiKey = useManagedAccount ? '' : (safePoolKey() || envKey || '');
+        const apiKey = useManagedAccount ? '' : safePoolKey();
         const modelForAttempt = useManagedAccount
           ? 'deepseek-flash'
           : (attempt === 0 || preferredModel === qualityModel ? preferredModel : qualityModel);
@@ -1249,7 +1320,7 @@ async function requestAIGeneration(
 
         try {
           const result = await runTier0WithTimeout(
-            () => runFlutterSupabaseAgentHarness(
+            (attemptSignal) => runFlutterSupabaseAgentHarness(
               latestUserPrompt,
               context,
               {
@@ -1262,15 +1333,17 @@ async function requestAIGeneration(
                   modelName: modelForAttempt,
                   apiKey,
                 },
-                signal,
+                signal: attemptSignal,
                 onEvent: (event) => {
                   onEvent?.(event);
                   onProgress?.(event.message);
                 },
+                onFile,
               }
             ),
             attempt === 0 && modelPreference !== 'quality' ? FAST_ATTEMPT_TIMEOUT_MS : QUALITY_ATTEMPT_TIMEOUT_MS,
             onProgress,
+            signal,
           );
 
           if (signal?.aborted) throw new Error('Generation cancelled by user');
@@ -1458,14 +1531,8 @@ async function requestAIGeneration(
   // Detect if this is an incremental edit (follow-up prompt after initial generation)
   const isIncremental = !isInitialGeneration && files.length > 0;
 
-  const envKey =
-    (typeof import.meta !== 'undefined' && (import.meta.env?.VITE_OPENROUTER_API_KEY as string | undefined)) ||
-    '';
-  // Belt-and-braces: ensure the env key participates in pool rotation even if
-  // the singleton was constructed before the env was injected (e.g. tests).
-  if (envKey) keyPool.addKey(envKey);
   const poolKey = safePoolKey();
-  const apiKey = poolKey || envKey || '';
+  const apiKey = poolKey || '';
 
   try {
     const result = await FlutterSupabaseAgent.execute(latestUserPrompt, context, {
@@ -1473,15 +1540,19 @@ async function requestAIGeneration(
       stateManagement: stateManagement as 'provider' | 'riverpod' | 'bloc' | 'change_notifier',
       isIncremental,
       conversationHistory,
+      signal,
       modelConfig: {
         provider: 'custom',
         modelName: agentModel,
         apiKey,
       },
       onEvent: (event) => {
+        onEvent?.(event as any);
         onProgress?.(event.message);
       },
     });
+
+    if (signal?.aborted) throw new Error('Generation cancelled by user');
 
     if (result.files && result.files.length > 0) {
       const existingFileMap = new Map(files.map((file) => [file.path, file.content]));
@@ -1493,8 +1564,11 @@ async function requestAIGeneration(
       }));
     }
   } catch (err) {
+    if (signal?.aborted) throw new Error('Generation cancelled by user');
     console.warn('[Tier 2] Local agent generation failed, proceeding to structured generator fallback:', err);
   }
+
+  if (signal?.aborted) throw new Error('Generation cancelled by user');
 
   // TIER 3: Deterministic Structured Template Generator Fallback
   // If ALL AI models are unavailable (503 capacity limit, 402 credits exhausted, offline, etc.)
@@ -1502,6 +1576,11 @@ async function requestAIGeneration(
   // Flutter project containing: Home, Profile, Settings, Navbar, Header, Login, Register, Onboard,
   // GoRouter, ThemeController, Item/User models, AppProvider, Supabase service, and SQL migrations.
   onProgress?.('AI model unavailable — applying complete production Flutter app structure with all sections...');
+  if (!isInitialGeneration && files.length > 0) {
+    throw new Error(
+      'AI providers are unavailable, so I could not safely apply this change. Your existing project files were kept unchanged. Check the AI connection or API key, then retry.',
+    );
+  }
   // Last-resort deterministic fallback must also respect the backend choice.
   // A local calculator should never receive auth screens and SQL.
   const fallbackFiles = usesSupabase

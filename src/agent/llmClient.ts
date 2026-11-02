@@ -71,14 +71,16 @@ export function budgetHistory<T extends { role: string; content: string }>(
   return recent.slice(start);
 }
 
-// Free model fallback chain - verified available free models on OpenRouter (Aug 2026)
+// Keep the preferred fast/quality models first, then use OpenRouter's free
+// router before provider-specific fallbacks. The router tracks live free-model
+// availability, so a retired or temporarily unavailable model does not strand
+// the request on a stale ID.
 const FREE_MODEL_CHAIN = [
-  'nvidia/nemotron-3-ultra-550b-a55b:free',
-  'poolside/laguna-s-2.1:free',
-  'cohere/north-mini-code:free',
-  'nvidia/nemotron-3-super-120b-a12b:free',
-  'google/gemma-4-31b-it:free',
   'nvidia/nemotron-3.5-lightning:free',
+  'nvidia/nemotron-3-ultra-550b-a55b:free',
+  'openrouter/free',
+  'cohere/north-mini-code:free',
+  'poolside/laguna-s-2.1:free',
 ];
 
 export class OpenRouterClient {
@@ -126,7 +128,16 @@ export class OpenRouterClient {
    */
   public async chat(
     messages: LLMMessage[],
-    options?: { temperature?: number; maxTokens?: number; responseFormat?: { type: string } }
+    options?: {
+      temperature?: number;
+      maxTokens?: number;
+      responseFormat?: { type: string };
+      signal?: AbortSignal;
+      onToken?: (token: string) => void;
+      onRetry?: (message: string) => void;
+      idleTimeoutMs?: number;
+      timeoutMs?: number;
+    }
   ): Promise<string> {
     const maxRetries = 3;
     let lastError: Error | null = null;
@@ -137,14 +148,18 @@ export class OpenRouterClient {
     // the body with no deadline at all. A slow (or hung) large completion
     // stalled generation forever with no retry. We now stream the completion
     // and enforce two real deadlines per attempt:
-    //   • idle — no SSE delta for 60s (covers "never starts producing" too)
-    //   • hard — 8 min cap even if the provider keeps trickling bytes
-    const IDLE_TIMEOUT_MS = 60000;
-    const HARD_TIMEOUT_MS = 480000;
+    //   • idle — no SSE delta for 30s (covers "never starts producing" too)
+    //   • hard — 3 min cap even if the provider keeps trickling bytes
+    const IDLE_TIMEOUT_MS = options?.idleTimeoutMs ?? 30000;
+    const HARD_TIMEOUT_MS = options?.timeoutMs ?? 180000;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
+      if (options?.signal?.aborted) throw new Error('Generation cancelled by user');
       const activeKey = this.explicitApiKey || keyPool.getNextKey();
       let timedOut = false;
+      let removeAbortListener = () => {};
+      let idleTimer: ReturnType<typeof setTimeout> | null = null;
+      let hardTimer: ReturnType<typeof setTimeout> | null = null;
 
       try {
         const payload: Record<string, unknown> = {
@@ -160,11 +175,15 @@ export class OpenRouterClient {
         }
 
         const controller = new AbortController();
-        let idleTimer: ReturnType<typeof setTimeout> | null = setTimeout(
+        const abortFromCaller = () => controller.abort();
+        options?.signal?.addEventListener('abort', abortFromCaller, { once: true });
+        removeAbortListener = () => options?.signal?.removeEventListener('abort', abortFromCaller);
+        if (options?.signal?.aborted) controller.abort();
+        idleTimer = setTimeout(
           () => controller.abort(),
           IDLE_TIMEOUT_MS,
         );
-        const hardTimer = setTimeout(() => controller.abort(), HARD_TIMEOUT_MS);
+        hardTimer = setTimeout(() => controller.abort(), HARD_TIMEOUT_MS);
         const bumpIdle = () => {
           if (idleTimer) clearTimeout(idleTimer);
           idleTimer = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS);
@@ -186,6 +205,7 @@ export class OpenRouterClient {
         if (!response.ok) {
           clearTimeout(idleTimer);
           clearTimeout(hardTimer);
+          removeAbortListener();
           const errorText = await response.text();
           let errorDetail = errorText;
           try {
@@ -193,13 +213,15 @@ export class OpenRouterClient {
             errorDetail = errorJson.error?.message || errorText;
           } catch { /* use raw */ }
 
-          const isRetryable = response.status === 429 || response.status === 402 || response.status >= 500;
-          // NOTE: 401 (bad key) and 404 (unknown model) fail fast on purpose —
-          // rotating models with the same credentials can never succeed and
-          // only burns minutes of timeout budget (see orchestrator heal loop).
+          const isRetryable = response.status === 401 || response.status === 402
+            || response.status === 404 || response.status === 429 || response.status >= 500;
+          // Rotate both credentials and models for auth/model availability
+          // failures too; a bad key or unavailable model must not block the
+          // remaining configured fallbacks.
           keyPool.markFailure(activeKey, `HTTP ${response.status}: ${errorDetail}`, isRetryable);
 
           if (isRetryable && attempt < maxRetries - 1) {
+            options?.onRetry?.(`Retrying the answer with another key or model (${attempt + 2}/${maxRetries})…`);
             currentModel = this.getNextModel();
             continue;
           }
@@ -234,6 +256,7 @@ export class OpenRouterClient {
           const token = ssePayload.choices?.[0]?.delta?.content;
           if (typeof token !== 'string' || !token) return;
           content += token;
+          options?.onToken?.(token);
           bumpIdle();
         };
 
@@ -251,6 +274,7 @@ export class OpenRouterClient {
         } finally {
           clearTimeout(idleTimer);
           clearTimeout(hardTimer);
+          removeAbortListener();
           reader.releaseLock();
         }
 
@@ -264,11 +288,16 @@ export class OpenRouterClient {
         keyPool.markSuccess(activeKey);
         return content;
       } catch (err) {
+        if (idleTimer) clearTimeout(idleTimer);
+        if (hardTimer) clearTimeout(hardTimer);
+        removeAbortListener();
+        if (options?.signal?.aborted) throw new Error('Generation cancelled by user');
         lastError = err instanceof Error ? err : new Error(String(err));
         if (lastError.name === 'AbortError' || timedOut) {
           lastError = new Error(`OpenRouter stream stalled or timed out on ${currentModel} — retrying with the next key/model.`);
         }
         if (attempt < maxRetries - 1) {
+          options?.onRetry?.(`The response stalled; retrying with another key or model (${attempt + 2}/${maxRetries})…`);
           currentModel = this.getNextModel();
           continue;
         }
@@ -285,85 +314,20 @@ export class OpenRouterClient {
       maxTokens?: number;
       signal?: AbortSignal;
       onToken?: (token: string) => void;
+      onRetry?: (message: string) => void;
+      idleTimeoutMs?: number;
+      timeoutMs?: number;
     },
   ): Promise<string> {
-    const activeKey = this.explicitApiKey || keyPool.getNextKey();
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${activeKey}`,
-        'HTTP-Referer': 'https://flutterforge.dev',
-        'X-Title': 'FlutterForge AI Agent',
-      },
-      body: JSON.stringify({
-        model: this.model,
-        messages,
-        temperature: options?.temperature ?? this.defaultTemperature,
-        max_tokens: clampMaxTokens(this.model, options?.maxTokens ?? 64000),
-        stream: true,
-      }),
+    return this.chat(messages, {
+      temperature: options?.temperature,
+      maxTokens: options?.maxTokens,
       signal: options?.signal,
+      onToken: options?.onToken,
+      onRetry: options?.onRetry,
+      idleTimeoutMs: options?.idleTimeoutMs,
+      timeoutMs: options?.timeoutMs,
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      let detail = errorText;
-      try {
-        const errorJson = JSON.parse(errorText) as { error?: { message?: string } };
-        detail = errorJson.error?.message || errorText;
-      } catch {
-        // Keep the raw response when the provider returns non-JSON errors.
-      }
-      keyPool.markFailure(activeKey, `HTTP ${response.status}: ${detail}`, response.status === 429 || response.status === 402 || response.status >= 500);
-      throw new Error(`OpenRouter API error (${response.status}): ${detail}`);
-    }
-
-    if (!response.body) throw new Error('OpenRouter returned no response stream.');
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let result = '';
-
-    const consumeFrame = (frame: string) => {
-      const data = frame
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).trimStart())
-        .join('\n');
-      if (!data || data === '[DONE]') return;
-
-      let payload: { choices?: Array<{ delta?: { content?: string | null } }> };
-      try {
-        payload = JSON.parse(data) as typeof payload;
-      } catch {
-        return;
-      }
-      const token = payload.choices?.[0]?.delta?.content;
-      if (typeof token !== 'string' || !token) return;
-      result += token;
-      options?.onToken?.(token);
-    };
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const frames = buffer.split(/\r?\n\r?\n/);
-        buffer = frames.pop() ?? '';
-        frames.forEach(consumeFrame);
-      }
-      buffer += decoder.decode();
-      if (buffer.trim()) consumeFrame(buffer);
-    } finally {
-      reader.releaseLock();
-    }
-
-    if (!result.trim()) throw new Error('The AI returned an empty reply — please try again.');
-    keyPool.markSuccess(activeKey);
-    return result.trim();
   }
 
   /**
@@ -375,6 +339,7 @@ export class OpenRouterClient {
     stateManagement: string,
     onProgress?: (msg: string) => void,
     conversationHistory: Array<{ role: string; content: string }> = [],
+    signal?: AbortSignal,
   ): Promise<AgentPlan> {
     onProgress?.(`Sending live planning request to OpenRouter (${this.model})...`);
 
@@ -409,9 +374,11 @@ export class OpenRouterClient {
         temperature: 0.1,
         maxTokens: 8000,
         responseFormat: { type: 'json_object' },
+        signal,
       });
     } catch {
-      rawResponse = await this.chat(messages, { temperature: 0.1, maxTokens: 8000 });
+      if (signal?.aborted) throw new Error('Generation cancelled by user');
+      rawResponse = await this.chat(messages, { temperature: 0.1, maxTokens: 8000, signal });
     }
 
     try {
@@ -511,6 +478,7 @@ export class OpenRouterClient {
     conversationHistory: Array<{ role: string; content: string }> = [],
     onProgress?: (msg: string) => void,
     usesSupabase = true,
+    signal?: AbortSignal,
   ): Promise<AgentFileArtifact[]> {
     const domain = plan.domain || 'general';
 
@@ -567,7 +535,7 @@ export class OpenRouterClient {
 
     onProgress?.('Generating all files in single AI pass...');
 
-    const rawResponse = await this.chat(messages, { temperature: 0.15, maxTokens: 64000 });
+    const rawResponse = await this.chat(messages, { temperature: 0.15, maxTokens: 64000, signal });
 
     onProgress?.('Parsing AI-generated files...');
 
@@ -593,6 +561,7 @@ export class OpenRouterClient {
     conversationHistory: Array<{ role: string; content: string }>,
     onProgress?: (msg: string) => void,
     usesSupabase = true,
+    signal?: AbortSignal,
   ): Promise<AgentFileArtifact[]> {
     onProgress?.('Generating incremental changes...');
 
@@ -612,7 +581,7 @@ export class OpenRouterClient {
 
     messages.push({ role: 'user', content: editPrompt });
 
-    const rawResponse = await this.chat(messages, { temperature: 0.15, maxTokens: 32000 });
+    const rawResponse = await this.chat(messages, { temperature: 0.15, maxTokens: 32000, signal });
 
     return MultiFileCodeGenerator.parseLLMCodeArtifacts(rawResponse);
   }

@@ -131,7 +131,7 @@ class AppTheme {
     ),
     scaffoldBackgroundColor: lightBg,
     textTheme: GoogleFonts.interTextTheme(ThemeData.light().textTheme),
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       color: lightSurface,
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -156,7 +156,7 @@ class AppTheme {
     ),
     scaffoldBackgroundColor: darkBg,
     textTheme: GoogleFonts.interTextTheme(ThemeData.dark().textTheme),
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       color: darkCard,
       elevation: 0,
       shape: RoundedRectangleBorder(

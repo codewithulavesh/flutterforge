@@ -47,6 +47,13 @@ export interface SSEAgentEvent {
   generatedFiles?: AgentFileArtifact[];
   validationReport?: ValidationReport;
   retrievedPatterns?: AgentEvent['retrievedPatterns'];
+  /** Structured activity kind emitted by the harness projector. */
+  kind?: 'phase' | 'reasoning' | 'tool' | 'tool_result' | 'validation' | 'file' | 'error';
+  tool?: string;
+  toolInput?: unknown;
+  toolCallId?: string;
+  status?: string;
+  filePath?: string;
 }
 
 export interface SSETokenEvent {
@@ -322,7 +329,15 @@ export async function runFlutterSupabaseAgentHarness(
       switch (event.type) {
         case 'agent_event': {
           const data = event.data as SSEAgentEvent;
-          const mappedEvent: AgentEvent & { node?: string } = {
+          const mappedEvent: AgentEvent & {
+            node?: string;
+            kind?: string;
+            tool?: string;
+            toolInput?: unknown;
+            toolCallId?: string;
+            status?: string;
+            filePath?: string;
+          } = {
             phase: data.phase || 'code_generation',
             stepNumber: data.stepNumber ?? data.step_number ?? 1,
             totalSteps: data.totalSteps ?? data.total_steps ?? 7,
@@ -336,6 +351,12 @@ export async function runFlutterSupabaseAgentHarness(
             validationReport: data.validationReport,
             retrievedPatterns: data.retrievedPatterns,
             timestamp: data.timestamp ?? new Date().toISOString(),
+            kind: data.kind,
+            tool: data.tool,
+            toolInput: data.toolInput,
+            toolCallId: data.toolCallId,
+            status: data.status,
+            filePath: data.filePath,
           };
 
           addAgentEvent(mappedEvent as SSEAgentEvent);
@@ -352,6 +373,7 @@ export async function runFlutterSupabaseAgentHarness(
 
         case 'file_ready': {
           const file = event.data as SSEFileReadyEvent;
+          options.onFile?.(file);
           const existing = files.findIndex((candidate) => candidate.path === file.path);
           const artifact: AgentFileArtifact = {
             path: file.path,

@@ -26,7 +26,7 @@ Electron shell (macOS .dmg / Windows .exe)
   └─ spawns ──► server/index.mjs  (Node, 127.0.0.1:<random port>)
                     ├─ static dist/ (production)
                     └─ harness bridge
-                          ├─ workspace: ~/.flutterforge/workspaces/<project>
+                          ├─ workspace: .flutterforge/workspaces/<project>
                           ├─ profile:  ~/.dsh/profiles/flutterforge-engine
                           └─ spawns `dsh --profile … --json --session-id … -`
                                 └─ dsh runtime (installed DeepSeek Harness)
@@ -62,7 +62,8 @@ flutterforge/
 │   │   ├── run.mjs               # workspace lifecycle + generation turn
 │   │   ├── events.mjs            # dsh NDJSON → UI SSE projection + validation
 │   │   ├── workspace.mjs         # safe paths, snapshots, diffs, code-block recovery
-│   │   ├── flutter.mjs           # Flutter SDK discovery for GUI-launched apps
+│   │   ├── flutter.mjs           # System and managed Flutter SDK discovery
+│   │   ├── managedFlutter.mjs    # Verified first-use Flutter SDK provisioning
 │   │   └── prompt.mjs            # AGENTS.md + generation prompt contract
 │   ├── preview.mjs               # warm `flutter run` preview + build fallback
 │   └── test/                     # node:test unit + integration tests (fixture dsh)
@@ -99,7 +100,7 @@ flutterforge/
 ```bash
 npm install
 cp .env.local.example .env.local
-# set VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_OPENROUTER_API_KEY
+# set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY; keep provider API keys server-side
 ```
 
 ### 2. Web development
@@ -128,10 +129,11 @@ docker compose up --build     # http://localhost:8787
 ```
 
 The image contains the UI, the harness bridge, and the preview compiler. The
-DeepSeek Harness runtime and the Flutter SDK are **not** in the image: mount a
-Linux DSH runtime and set `DSH_BIN`, and extend the image with Flutter if you
-need live previews. Without them the UI still loads and the browser agent
-fallback works.
+DeepSeek Harness runtime is **not** in the image: mount a Linux DSH runtime and
+set `DSH_BIN` to enable that generation route. On first preview, FlutterForge
+downloads the official stable Flutter SDK into the configured data directory,
+checks its SHA-256 digest, and caches it there. The host needs outbound internet
+access and enough disk space for the archive, SDK, and Flutter web artifacts.
 
 ### 5. Build installers
 
@@ -165,7 +167,7 @@ The profile is separate from any `flutterforge` UI profile you may already have.
 
 ### Workspaces and sessions
 
-Each project owns `~/.flutterforge/workspaces/<project-id>`. Initial generation
+Each project owns `.flutterforge/workspaces/<project-id>` inside this checkout by default. Initial generation
 resets it; edit turns reuse it. The `dsh` session id is persisted in
 `.flutterforge/session.json`, so follow-up prompts continue the same conversation
 and the agent sees its earlier work. `DELETE /api/harness/session/:id` resets both.
@@ -208,10 +210,13 @@ SSE events:
 | `DSH_BIN` | auto-detect | Path to the `dsh` CLI |
 | `DSH_HOME` | `~/.dsh` | Harness profiles, sessions, credentials |
 | `FLUTTERFORGE_DSH_PROFILE` | `flutterforge-engine` | Engine profile name |
-| `FLUTTERFORGE_WORKSPACES` | `~/.flutterforge/workspaces` | Per-project workspaces |
+| `FLUTTERFORGE_DATA_DIR` | `<checkout>/.flutterforge` (packaged desktop: app user data) | Workspaces, previews, managed SDK, and caches |
+| `FLUTTERFORGE_WORKSPACES` | `<data-dir>/workspaces` | Per-project workspaces override |
+| `FLUTTERFORGE_PREVIEWS` | `<data-dir>/previews` | Preview build state override |
 | `FLUTTERFORGE_HARNESS_TIMEOUT_MS` | `1200000` | Per-turn hard timeout |
 | `FLUTTERFORGE_PREVIEW_MODE` | `run` | `run` = warm Flutter web server; `build` = static release build |
-| `FLUTTER_BIN` | auto-detect | Flutter SDK executable for preview/terminal |
+| `FLUTTER_BIN` | auto-detect / FlutterForge-managed SDK | Optional Flutter executable override |
+| `PUB_CACHE` | `<data-dir>/toolchains/pub-cache` | Dart package cache (kept in app data) |
 | `OPENROUTER_API_KEY` / `DEEPSEEK_API_KEY` | — | Fallback keys when the UI does not send one |
 
 `dsh` discovery order: `DSH_BIN` → bundled `resources/dsh/bin/dsh` → installed
@@ -242,8 +247,9 @@ Node bridge (`server/preview.mjs`). Like FlutterPad, it keeps a warm
 `flutter run -d web-server` process per project, so edits reload in seconds
 instead of rebuilding a release bundle each time. Set
 `FLUTTERFORGE_PREVIEW_MODE=build` for a one-shot `flutter build web` static host
-(hosted/Docker deployments). The bridge discovers the Flutter SDK even when the
-desktop app was launched from Finder/Explorer (where `PATH` is minimal).
+(hosted/Docker deployments). The desktop bridge checks common SDK locations,
+then provisions a verified Flutter SDK in app data when the user has none; it
+does not rely on Finder/Explorer inheriting a login-shell `PATH`.
 `preview-infra/` remains available as an optional Docker/Redis build farm.
 Native macOS/Windows preview requires running `flutter run -d macos|windows` on
 that OS; the export README says so rather than pretending a web iframe is a
@@ -354,8 +360,14 @@ session reuse, and reset without spending model tokens.
 - **A fresh run must produce `pubspec.yaml` and `lib/main.dart`.** Partial answers
   are rejected and retried with the next key / quality model.
 - **Preview is Flutter web**; native desktop preview is a local `flutter run`.
-- **Flutter SDK is not bundled**; the bridge auto-detects it from common install
-  locations or `FLUTTER_BIN`.
+- **Flutter SDK is not bundled in installers.** The desktop app reuses a
+  compatible local SDK when found; otherwise, the first Preview or Flutter/Dart
+  terminal command downloads the official stable SDK into app data and verifies
+  its SHA-256 digest. This does not install Flutter system-wide. Offline users
+  can set `FLUTTER_BIN` to an existing SDK or install Flutter manually.
+- **Preview targets Flutter web.** Android builds additionally need Android SDK
+  and accepted licenses; iOS builds need macOS and Xcode. FlutterForge does not
+  install those platform toolchains automatically.
 - The academic reports (`THESIS_*.md`, `COMBINED_*.md`, etc.) describe the earlier
   Python/LangGraph architecture and are kept as historical artifacts.
 

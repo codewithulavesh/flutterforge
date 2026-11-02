@@ -1,9 +1,19 @@
 import { useNavigate } from 'react-router-dom';
-import * as Icons from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
 import {
+  Circle,
+  Code2,
+  Download as DownloadIcon,
+  Eye,
+  FolderTree,
+  History,
+  LayoutGrid,
+  MoreHorizontal,
+  Package,
   Play,
+  Settings as SettingsIcon,
+  Sparkles,
   Square,
+  TerminalSquare,
   RotateCw,
   Hammer,
   Download,
@@ -13,6 +23,7 @@ import {
   FolderOpen,
   Command,
   Zap,
+  type LucideIcon,
 } from 'lucide-react';
 import { useWorkspaceStore } from '@/stores/workspace.store';
 import { useProjectStore } from '@/stores/project.store';
@@ -30,6 +41,18 @@ import { SIDEBAR_SECTIONS } from '@/utils/constants';
 import { cn } from '@/utils/cn';
 
 const PRIMARY_NAV_ITEMS = new Set(['dashboard', 'ai-builder', 'preview', 'files', 'code', 'terminal']);
+const NAV_ICONS: Record<string, LucideIcon> = {
+  LayoutGrid,
+  Sparkles,
+  Eye,
+  FolderTree,
+  Package,
+  Code2,
+  TerminalSquare,
+  History,
+  Settings: SettingsIcon,
+  Download: DownloadIcon,
+};
 const WORKSPACE_NAV_ITEMS = SIDEBAR_SECTIONS.reduce<Array<{ id: string; label: string; icon: string }>>(
   (items, section) => [...items, ...section.items],
   [],
@@ -120,24 +143,27 @@ export function WorkspaceToolbar() {
   }
 
   return (
-    <header className="bg-[var(--ff-surface)] border-b border-[var(--ff-border)] shrink-0">
-      <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 min-h-12 px-2 sm:px-3 py-1.5">
+    <header className="sticky top-0 z-30 shrink-0 border-b border-[var(--ff-border)] bg-[var(--ff-surface)]/85 backdrop-blur-xl shadow-[0_1px_0_rgba(255,255,255,0.04)]">
+      <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 min-h-[60px] px-2 sm:px-3 py-2">
 
         {/* ── Left: logo + project name ─────────────────────── */}
-        <div className="flex items-center gap-1 sm:gap-2 shrink-0 ml-auto sm:ml-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 ml-auto sm:ml-0">
           <button
             onClick={() => navigate('/dashboard')}
-            className="group flex items-center gap-2 text-sm hover:opacity-90 transition-opacity"
+            className="group flex items-center gap-2 rounded-lg px-1.5 py-1 transition-all hover:bg-[var(--ff-surface-2)]"
           >
             <BrandLogo size={28} className="border border-[var(--ff-border)] shadow-[3px_3px_0_var(--ff-studio-yellow)]" />
-            <span className="hidden sm:block max-w-28 truncate font-bold text-sm text-[var(--ff-text)] group-hover:text-[var(--ff-primary)] transition-colors">
-              {currentProject?.name ?? 'FlutterForge'}
-            </span>
+            <div className="hidden sm:flex flex-col leading-none text-left">
+              <span className="max-w-28 truncate font-semibold text-[12px] text-[var(--ff-text)] group-hover:text-[var(--ff-primary)] transition-colors">
+                {currentProject?.name ?? 'FlutterForge'}
+              </span>
+              <span className="mt-1 text-[9px] uppercase tracking-[0.12em] text-[var(--ff-text-dim)]">Workspace</span>
+            </div>
           </button>
 
           {/* Status badge */}
           {currentProject && (
-            <Badge variant={currentProject.status === 'ready' ? 'success' : 'default'} className="hidden sm:flex text-[10px]">
+            <Badge variant={currentProject.status === 'ready' ? 'success' : 'default'} className="hidden sm:flex text-[10px] px-2 py-0.5">
               {currentProject.status ?? 'created'}
             </Badge>
           )}
@@ -159,25 +185,24 @@ export function WorkspaceToolbar() {
             style={{ scrollbarWidth: 'none' }}
           >
             {WORKSPACE_NAV_ITEMS.filter((item) => PRIMARY_NAV_ITEMS.has(item.id)).map((item) => {
-              const Icon = (Icons as unknown as Record<string, LucideIcon>)[item.icon] ?? Icons.Circle;
+              const Icon = NAV_ICONS[item.icon] ?? Circle;
               const isActive = item.id === activeView;
               return (
                 <button
                   key={item.id}
                   onClick={() => item.id === 'dashboard' ? navigate('/dashboard') : setActiveView(item.id as typeof activeView)}
                   className={cn(
-                    'relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap transition-all shrink-0',
+                    'relative flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-[11px] font-medium whitespace-nowrap transition-all shrink-0 ring-1 ring-transparent',
                     isActive
-                      ? 'bg-[var(--ff-primary)]/12 text-[var(--ff-primary)] shadow-sm'
+                      ? 'bg-[var(--ff-primary)]/12 text-[var(--ff-primary)] shadow-[inset_0_0_0_1px_rgba(120,119,198,0.12)] ring-[var(--ff-primary)]/10'
                       : 'text-[var(--ff-text-muted)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)]'
                   )}
                   aria-current={isActive ? 'page' : undefined}
                 >
                   <Icon size={13} className="shrink-0" />
                   <span className="hidden sm:inline">{item.label}</span>
-                  {/* Active underline */}
                   {isActive && (
-                    <span className="absolute bottom-0 inset-x-2 h-0.5 rounded-full bg-[var(--ff-primary)]" />
+                    <span className="absolute inset-x-2 -bottom-0.5 h-0.5 rounded-full bg-[var(--ff-primary)]" />
                   )}
                 </button>
               );
@@ -187,54 +212,52 @@ export function WorkspaceToolbar() {
           {/* More dropdown - outside scroll container to avoid clipping */}
           <div className="shrink-0">
             <Dropdown
-            trigger={
-              <button
-                aria-label="More workspace tools"
-                className={cn(
-                  'relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium whitespace-nowrap transition-all shrink-0',
-                  hasSecondaryActiveView
-                    ? 'bg-[var(--ff-primary)]/12 text-[var(--ff-primary)]'
-                    : 'text-[var(--ff-text-muted)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)]'
-                )}
-              >
-                <Icons.MoreHorizontal size={13} />
-                <span className="hidden sm:inline">More</span>
-              </button>
-            }
-          >
-            {WORKSPACE_NAV_ITEMS.filter((item) => !PRIMARY_NAV_ITEMS.has(item.id)).map((item) => {
-              const Icon = (Icons as unknown as Record<string, LucideIcon>)[item.icon] ?? Icons.Circle;
-              const isActive = activeView === item.id;
-              return (
-                <DropdownItem key={item.id} icon={<Icon size={14} />} onClick={() => setActiveView(item.id as typeof activeView)}>
-                  <span className={cn(isActive && 'text-[var(--ff-primary)] font-medium')}>{item.label}</span>
-                </DropdownItem>
-              );
-            })}
-            <DropdownItem icon={<MessageSquarePlus size={14} />} onClick={() => dispatchChat('ff:new-chat')}>New chat</DropdownItem>
-            <DropdownItem icon={<Copy size={14} />} onClick={() => dispatchChat('ff:copy-last')}>Copy last response</DropdownItem>
-            <DropdownItem icon={<RotateCcw size={14} />} onClick={() => dispatchChat('ff:retry-last')}>Retry last response</DropdownItem>
-            {window.flutterforgeDesktop?.isDesktop && (
-              <DropdownItem icon={<FolderOpen size={14} />} onClick={() => void openProjectFolder()}>Open project folder</DropdownItem>
-            )}
-          </Dropdown>
+              trigger={
+                <button
+                  aria-label="More workspace tools"
+                  className={cn(
+                    'relative flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-[11px] font-medium whitespace-nowrap transition-all shrink-0',
+                    hasSecondaryActiveView
+                      ? 'bg-[var(--ff-primary)]/12 text-[var(--ff-primary)]'
+                      : 'text-[var(--ff-text-muted)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)]'
+                  )}
+                >
+                  <MoreHorizontal size={13} />
+                  <span className="hidden sm:inline">More</span>
+                </button>
+              }
+            >
+              {WORKSPACE_NAV_ITEMS.filter((item) => !PRIMARY_NAV_ITEMS.has(item.id)).map((item) => {
+                const Icon = NAV_ICONS[item.icon] ?? Circle;
+                const isActive = activeView === item.id;
+                return (
+                  <DropdownItem key={item.id} icon={<Icon size={14} />} onClick={() => setActiveView(item.id as typeof activeView)}>
+                    <span className={cn(isActive && 'text-[var(--ff-primary)] font-medium')}>{item.label}</span>
+                  </DropdownItem>
+                );
+              })}
+              <DropdownItem icon={<MessageSquarePlus size={14} />} onClick={() => dispatchChat('ff:new-chat')}>New chat</DropdownItem>
+              <DropdownItem icon={<Copy size={14} />} onClick={() => dispatchChat('ff:copy-last')}>Copy last response</DropdownItem>
+              <DropdownItem icon={<RotateCcw size={14} />} onClick={() => dispatchChat('ff:retry-last')}>Retry last response</DropdownItem>
+              {window.flutterforgeDesktop?.isDesktop && (
+                <DropdownItem icon={<FolderOpen size={14} />} onClick={() => void openProjectFolder()}>Open project folder</DropdownItem>
+              )}
+            </Dropdown>
           </div>
         </div>
 
         {/* ── Right: command + build actions ───────────────── */}
         <div className="flex items-center gap-1 sm:gap-2 shrink-0 ml-auto sm:ml-0">
           <ThemeToggle />
-          {/* Command bar — hidden on small screens */}
           <button
             onClick={() => setCommandPaletteOpen(true)}
-            className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--ff-bg)] border border-[var(--ff-border)] text-xs text-[var(--ff-text-dim)] hover:text-[var(--ff-text-muted)] hover:border-[var(--ff-border-hover)] transition-all w-48 shrink-0"
+            className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--ff-bg)] border border-[var(--ff-border)] text-xs text-[var(--ff-text-dim)] hover:text-[var(--ff-text-muted)] hover:border-[var(--ff-border-hover)] transition-all w-48 shrink-0 shadow-sm"
           >
             <Command size={11} />
             <span className="flex-1 text-left truncate">Search commands...</span>
             <kbd className="px-1.5 py-0.5 rounded border border-[var(--ff-border)] text-[10px]">⌘K</kbd>
           </button>
 
-          {/* Reload */}
           <Button
             variant="ghost"
             size="sm"
@@ -245,7 +268,6 @@ export function WorkspaceToolbar() {
             <span className="hidden lg:inline">Rebuild</span>
           </Button>
 
-          {/* Run / Build */}
           <Button
             variant="secondary"
             size="sm"
@@ -256,7 +278,6 @@ export function WorkspaceToolbar() {
             <span>{isBuilding ? 'Building...' : 'Build'}</span>
           </Button>
 
-          {/* Build dropdown */}
           <Dropdown
             trigger={
               <button

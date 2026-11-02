@@ -16,7 +16,7 @@ services:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DSH_BIN=${DSH_BIN:-}
       - DSH_HOME=/data/dsh
-      - FLUTTERFORGE_WORKSPACES=/data/workspaces
+      - FLUTTERFORGE_DATA_DIR=/data/.flutterforge
     volumes:
       - flutterforge-data:/data
       # Mount a Linux DeepSeek Harness runtime to enable the harness engine:

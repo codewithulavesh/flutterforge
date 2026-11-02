@@ -1,22 +1,21 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { lazy, Suspense, useEffect, useState, useCallback, useRef } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
 import { useProjectStore } from '@/stores/project.store';
 import { useWorkspaceStore } from '@/stores/workspace.store';
 import { useTerminalStore } from '@/stores/terminal.store';
 import { usePreviewStore } from '@/stores/preview.store';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
-import { WorkspaceToolbar } from '@/features/workspace/WorkspaceToolbar';
-import { AIBuilderPanel } from '@/features/workspace/AIBuilderPanel';
-import { FileExplorer } from '@/features/workspace/FileExplorer';
-import { CodeEditor } from '@/features/workspace/CodeEditor';
-import { PreviewPanel } from '@/features/workspace/PreviewPanel';
-import { TerminalPanel } from '@/features/workspace/TerminalPanel';
-import { BuildOutputPanel } from '@/features/workspace/BuildOutputPanel';
-import { DependenciesView } from '@/features/workspace/DependenciesView';
-import { VersionsView } from '@/features/workspace/VersionsView';
-import { SettingsView } from '@/features/workspace/SettingsView';
-import { ExportView } from '@/features/workspace/ExportView';
-import { CommandPalette } from '@/features/workspace/CommandPalette';
+const WorkspaceToolbar = lazy(() => import('@/features/workspace/WorkspaceToolbar').then((module) => ({ default: module.WorkspaceToolbar })));
+const AIBuilderPanel = lazy(() => import('@/features/workspace/AIBuilderPanel').then((module) => ({ default: module.AIBuilderPanel })));
+const FileExplorer = lazy(() => import('@/features/workspace/FileExplorer').then((module) => ({ default: module.FileExplorer })));
+const CodeEditor = lazy(() => import('@/features/workspace/CodeEditor').then((module) => ({ default: module.CodeEditor })));
+const PreviewPanel = lazy(() => import('@/features/workspace/PreviewPanel').then((module) => ({ default: module.PreviewPanel })));
+const TerminalPanel = lazy(() => import('@/features/workspace/TerminalPanel').then((module) => ({ default: module.TerminalPanel })));
+const DependenciesView = lazy(() => import('@/features/workspace/DependenciesView').then((module) => ({ default: module.DependenciesView })));
+const VersionsView = lazy(() => import('@/features/workspace/VersionsView').then((module) => ({ default: module.VersionsView })));
+const SettingsView = lazy(() => import('@/features/workspace/SettingsView').then((module) => ({ default: module.SettingsView })));
+const ExportView = lazy(() => import('@/features/workspace/ExportView').then((module) => ({ default: module.ExportView })));
+const CommandPalette = lazy(() => import('@/features/workspace/CommandPalette').then((module) => ({ default: module.CommandPalette })));
 import { FullPageSpinner } from '@/components/ui/Spinner';
 import { Terminal as TerminalIcon, Hammer, Sparkles } from 'lucide-react';
 import { cn } from '@/utils/cn';
@@ -97,42 +96,39 @@ export function WorkspacePage() {
     return <Navigate to="/dashboard" replace />;
   }
 
-  // The AI Builder tab is a full-page chat. Other views keep the compact chat
-  // sidebar so the user can keep talking while previewing or editing code.
+  // On narrow screens the AI Builder is reached from the workspace navigation
+  // as a full-page view. Keeping a second chat pane here would squeeze the
+  // editor and preview below a useful size.
   const showAiPanel = activeView !== 'ai-builder';
   const showFileExplorer = activeView === 'code' || activeView === 'files';
 
   return (
     <div className={cn('flex h-dvh overflow-hidden bg-[var(--ff-bg)] ff-studio', isDragging && 'select-none cursor-col-resize')}>
-      <CommandPalette />
+      <div className="flex-1 flex flex-col min-w-0 mx-auto w-full max-w-[1800px]">
+        <Suspense fallback={<div className="h-[60px] shrink-0 border-b border-[var(--ff-border)] bg-[var(--ff-surface)]" />}>
+          <WorkspaceToolbar />
+        </Suspense>
+        <Suspense fallback={null}>
+          <CommandPalette />
+        </Suspense>
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <WorkspaceToolbar />
-
-        {/* Main content area - responsive: column on mobile, row on desktop */}
-        <div className="flex-1 flex flex-col lg:flex-row min-h-0">
+        {/* Keep the work surface usable on phones and tablets. Side panels join
+            the canvas only when there is enough horizontal room. */}
+        <div className="flex-1 flex flex-col xl:flex-row min-h-0 bg-[var(--ff-bg)]">
 
           {/* AI Builder Panel - responsive drawer on mobile */}
           {showAiPanel && (
             <>
               <div
-                style={{ width: isDragging ? aiPanelWidth : undefined }}
-                className="shrink-0 flex flex-col border-b lg:border-b-0 lg:border-r border-[var(--ff-border)] bg-[var(--ff-surface)] transition-none overflow-hidden w-full lg:w-auto h-[38vh] sm:h-[45vh] lg:h-auto lg:shrink-0"
+                style={{ width: aiPanelWidth, minWidth: AI_PANEL_MIN, maxWidth: AI_PANEL_MAX }}
+                className="hidden xl:flex shrink-0 flex-col border-r border-[var(--ff-border)] bg-[var(--ff-surface)] transition-none overflow-hidden h-full"
               >
-                <div
-                  style={{ width: aiPanelWidth, minWidth: AI_PANEL_MIN, maxWidth: AI_PANEL_MAX }}
-                  className="hidden lg:flex flex-col w-full h-full overflow-hidden shrink-0"
-                >
-                  <AIBuilderPanel />
-                </div>
-                <div className="flex lg:hidden flex-col w-full h-full overflow-hidden">
-                  <AIBuilderPanel />
-                </div>
+                <Suspense fallback={<div className="h-full" />}><AIBuilderPanel /></Suspense>
               </div>
               {/* Drag handle - hidden on mobile */}
               <div
                 onMouseDown={handleMouseDown}
-                className="hidden lg:flex w-1 shrink-0 cursor-col-resize hover:bg-[var(--ff-primary)]/50 active:bg-[var(--ff-primary)] transition-colors group relative"
+                className="hidden xl:flex w-1 shrink-0 cursor-col-resize hover:bg-[var(--ff-primary)]/50 active:bg-[var(--ff-primary)] transition-colors group relative"
                 title="Drag to resize AI panel"
               >
                 <div className="absolute inset-y-0 -left-1 -right-1" />
@@ -140,40 +136,21 @@ export function WorkspacePage() {
             </>
           )}
 
-          {/* File Explorer - hidden on mobile, drawer on tablet */}
+          {/* On phones the file list becomes a short top panel; on wide screens
+              it sits beside the editor as a conventional explorer sidebar. */}
           {showFileExplorer && (
-            <div className="w-full sm:w-60 lg:w-60 shrink-0 border-b lg:border-b-0 lg:border-r border-[var(--ff-border)] h-[22vh] sm:h-[30vh] lg:h-auto overflow-hidden">
-              <FileExplorer />
+            <div className="w-full xl:w-60 shrink-0 border-b xl:border-b-0 xl:border-r border-[var(--ff-border)] h-[min(24vh,220px)] xl:h-auto overflow-hidden">
+              <Suspense fallback={<div className="h-full" />}><FileExplorer /></Suspense>
             </div>
           )}
 
           {/* Center: main view — preview is hidden until generation completes */}
           <div className="flex-1 flex flex-col min-w-0">
             <div className="flex-1 min-h-0 overflow-hidden">
-              {renderMainView(activeView)}
+              <Suspense fallback={<FullPageSpinner label="Loading workspace view..." />}>
+                {renderMainView(activeView)}
+              </Suspense>
             </div>
-
-            {/* Bottom panel */}
-            {bottomPanelOpen && (
-              <div className="h-28 sm:h-48 border-t border-[var(--ff-border)] flex flex-col shrink-0">
-                <div className="flex items-center gap-1 px-2 py-1 border-b overflow-x-auto ff-scrollbar flex-nowrap border-[var(--ff-border)] bg-[var(--ff-surface)] shrink-0">
-                  <BottomTab id="terminal" icon={<TerminalIcon size={12} />} label="Terminal" active={bottomPanelTab === 'terminal'} onClick={(id) => setBottomPanelTab(id as typeof bottomPanelTab)} />
-                  <BottomTab id="build" icon={<Hammer size={12} />} label="Build" active={bottomPanelTab === 'build'} onClick={(id) => setBottomPanelTab(id as typeof bottomPanelTab)} />
-                  <BottomTab id="ai-activity" icon={<Sparkles size={12} />} label="AI Activity" active={bottomPanelTab === 'ai-activity'} onClick={(id) => setBottomPanelTab(id as typeof bottomPanelTab)} />
-                  <button
-                    onClick={() => setBottomPanelOpen(false)}
-                    className="ml-auto px-2 py-1 text-xs text-[var(--ff-text-dim)] hover:text-[var(--ff-text)]"
-                  >
-                    ✕ Close
-                  </button>
-                </div>
-                <div className="flex-1 min-h-0">
-                  {bottomPanelTab === 'terminal' && <TerminalPanel />}
-                  {bottomPanelTab === 'build' && <BuildOutputPanel />}
-                  {bottomPanelTab === 'ai-activity' && <AIActivityPanel />}
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>

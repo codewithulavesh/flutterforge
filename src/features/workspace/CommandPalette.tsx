@@ -1,13 +1,22 @@
 import { useState, useEffect, useRef } from 'react';
-import * as Icons from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
-import { Search } from 'lucide-react';
+import { Circle, Download, Eye, FolderOpen, Hammer, Package, Search, Sparkles, SquarePlus, TerminalSquare, type LucideIcon } from 'lucide-react';
 import { useWorkspaceStore } from '@/stores/workspace.store';
 import { COMMAND_PALETTE_COMMANDS } from '@/utils/constants';
 import { toast } from '@/components/ui/Toast';
 import { useProjectStore } from '@/stores/project.store';
 import { usePreviewStore } from '@/stores/preview.store';
 import { cn } from '@/utils/cn';
+
+const COMMAND_ICONS: Record<string, LucideIcon> = {
+  FileOpen: FolderOpen,
+  Eye,
+  Sparkles,
+  TerminalSquare,
+  Hammer,
+  Package,
+  SquarePlus,
+  Download,
+};
 
 export function CommandPalette() {
   const { commandPaletteOpen, setCommandPaletteOpen, setActiveView } = useWorkspaceStore();
@@ -116,7 +125,7 @@ export function CommandPalette() {
             <div key={section}>
               <p className="px-3 py-1 text-[10px] font-semibold text-[var(--ff-text-dim)] uppercase tracking-wider">{section}</p>
               {commands.map((cmd) => {
-                const Icon = (Icons as unknown as Record<string, LucideIcon>)[cmd.icon] ?? Icons.Circle;
+                const Icon = COMMAND_ICONS[cmd.icon] ?? Circle;
                 const idx = filtered.indexOf(cmd);
                 return (
                   <button

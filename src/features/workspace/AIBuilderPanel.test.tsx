@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { AIBuilderPanel } from './AIBuilderPanel';
 import { useTerminalStore } from '@/stores/terminal.store';
+import { useActivityStore } from '@/stores/activity.store';
 
 const { projectState, sendMessageMock } = vi.hoisted(() => {
   const sendMessageMock = vi.fn();
@@ -70,10 +71,12 @@ describe('AIBuilderPanel realtime chat', () => {
       lines: [],
       liveFiles: [],
     });
+    useActivityStore.getState().clear();
   });
 
   afterEach(() => {
     cleanup();
+    useActivityStore.getState().clear();
     useTerminalStore.setState({ isAnswering: false, isGenerating: false, currentPhase: null, generationError: null });
   });
 
@@ -91,8 +94,8 @@ describe('AIBuilderPanel realtime chat', () => {
       </MemoryRouter>,
     );
 
-    await user.type(screen.getByPlaceholderText('Ask anything'), 'How does this project work?');
-    await user.click(screen.getByRole('button', { name: 'Send message' }));
+    await user.type(screen.getByPlaceholderText('Ask about the project, or describe what to build next…'), 'How does this project work?');
+    await user.click(screen.getByRole('button', { name: 'Submit' }));
 
     expect(await screen.findByText('The answer is arriving')).toBeTruthy();
     expect(sendMessageMock).toHaveBeenCalledOnce();
@@ -100,10 +103,26 @@ describe('AIBuilderPanel realtime chat', () => {
     await waitFor(() => expect(useTerminalStore.getState().isAnswering).toBe(false));
   });
 
-  it('shows the live thought chain while the agent is designing architecture', () => {
+  it('shows the live agent timeline, sources, queue and terminal of a running generation', () => {
+    const activity = useActivityStore.getState();
+    activity.begin('project-1', 'Build a pomodoro timer', true, 'google/gemini-2.0-flash:free');
+    activity.ingestProgress('Understanding the brief');
+    activity.ingestProgress('Planning the app architecture');
+    activity.ingestProgress('lib/main.dart created');
+    activity.ingestFile({ path: 'lib/main.dart', action: 'created', content: '', language: 'dart', node: 'file_ready' });
+    useActivityStore.setState({
+      plan: {
+        appName: 'Pomodoro Timer',
+        appDescription: 'A focused timer app.',
+        architecture: 'feature_first',
+        stateManagement: 'provider',
+        screens: [{ name: 'Home', routePath: '/', filePath: 'lib/screens/home_screen.dart' }],
+        filesToCreate: ['lib/main.dart', 'lib/screens/home_screen.dart', 'lib/widgets/timer_ring.dart'],
+      } as never,
+    });
     useTerminalStore.setState({
       isGenerating: true,
-      currentPhase: 'Designing the app architecture',
+      currentPhase: 'Planning the app architecture',
     });
 
     render(
@@ -112,13 +131,17 @@ describe('AIBuilderPanel realtime chat', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText(/LIVE ·/)).toBeTruthy();
-    // Header title + the active ThoughtChain step share the phase label.
-    expect(screen.getAllByText('Designing the app architecture').length).toBeGreaterThan(0);
-    expect(screen.getByText('In progress')).toBeTruthy();
+    // Agent card identifies the run and its model.
+    expect(screen.getByText('FlutterForge Agent')).toBeTruthy();
+    expect(screen.getByText('gemini 2.0 flash')).toBeTruthy();
+    // The two ingested progress messages become chain-of-thought steps.
+    expect(screen.getByText('Planning the app architecture')).toBeTruthy();
     expect(screen.getByText('Understanding the brief')).toBeTruthy();
-    expect(screen.getByText('Writing Flutter files')).toBeTruthy();
-    // Detail text appears in both the card header and the active chain item.
-    expect(screen.getAllByText('Shaping the app structure and deciding how its screens fit together.').length).toBeGreaterThan(0);
+    // Sources list the file the engine produced.
+    expect(screen.getByText('Used 1 project sources')).toBeTruthy();
+    // Queued plan files that have not been generated yet show as in progress.
+    expect(screen.getByText(/in progress/)).toBeTruthy();
+    // The terminal accumulates every streaming line, ready to expand.
+    expect(screen.getByText(/Live logs · 3 lines/)).toBeTruthy();
   });
 });

@@ -9,8 +9,14 @@ class ResizeObserverMock {
   observe(target: Element) {
     // Fire once so layout-dependent effects initialise, as a real observer
     // would when the element first gets a size.
-    this.callback([], this as unknown as ResizeObserver);
-    void target;
+    const entry = {
+      target,
+      contentRect: { width: 800, height: 600, top: 0, left: 0, bottom: 600, right: 800, x: 0, y: 0, toJSON: () => ({}) },
+      borderBoxSize: [],
+      contentBoxSize: [],
+      devicePixelContentBoxSize: [],
+    } as unknown as ResizeObserverEntry;
+    this.callback([entry], this as unknown as ResizeObserver);
   }
   unobserve() {}
   disconnect() {}

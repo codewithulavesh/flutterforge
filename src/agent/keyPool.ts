@@ -31,33 +31,10 @@ export class OpenRouterKeyPool {
   }
 
   private initKeys() {
-    const envKeysString =
-      (typeof import.meta !== 'undefined' && import.meta.env?.VITE_OPENROUTER_API_KEYS) ||
-      (typeof process !== 'undefined' && (process.env?.VITE_OPENROUTER_API_KEYS || process.env?.OPENROUTER_API_KEYS));
-
-    let keyList: string[] = [];
-    if (typeof envKeysString === 'string' && envKeysString.trim().length > 0) {
-      keyList = envKeysString
-        .split(',')
-        .map((k) => k.trim())
-        .filter((k) => k.startsWith('sk-'));
-    }
-
-    // Fall back to the singular key env vars (the names the app actually
-    // uses everywhere else). Without this the pool is always empty and
-    // multi-key failover never engages.
-    if (keyList.length === 0) {
-      const singular =
-        (typeof import.meta !== 'undefined' && import.meta.env?.VITE_OPENROUTER_API_KEY) ||
-        (typeof process !== 'undefined' && (process.env?.VITE_OPENROUTER_API_KEY || process.env?.OPENROUTER_API_KEY));
-      if (typeof singular === 'string' && singular.trim().startsWith('sk-')) {
-        keyList = [singular.trim()];
-      }
-    }
-
-    if (keyList.length === 0) {
-      keyList = [...DEFAULT_OPENROUTER_KEYS];
-    }
+    // Never read provider secrets from Vite env: these values are in the
+    // browser bundle and visible to every user. Keys can be supplied by the
+    // user explicitly or kept server-side by a trusted deployment.
+    const keyList = [...DEFAULT_OPENROUTER_KEYS];
 
     for (const key of keyList) {
       if (!this.keys.has(key)) {

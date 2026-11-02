@@ -1,7 +1,8 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { getProjectWorkspace } from './harness/run.mjs';
-import { findFlutter } from './harness/flutter.mjs';
+import { findDart, findFlutter } from './harness/flutter.mjs';
+import { ensureFlutter } from './harness/managedFlutter.mjs';
 import { runCommand } from './harness/dsh.mjs';
 import { resolveInside } from './harness/workspace.mjs';
 import { fixInvalidPlainScalars, sanitizeSdkConstraint, sanitizeFlutterConstraint, getToolchainVersions } from './harness/pubspecFix.mjs';
@@ -106,7 +107,11 @@ export async function runTerminalCommand(projectId, command) {
     }
   }
 
-  const binary = executable === 'flutter' ? findFlutter() : executable;
+  const binary = executable === 'flutter'
+    ? await ensureFlutter({ onProgress: (line) => console.log(`[toolchain] ${line}`) })
+    : executable === 'dart'
+      ? (await ensureFlutter({ onProgress: (line) => console.log(`[toolchain] ${line}`) }), findDart())
+      : executable;
   const args = tokens.slice(1);
   // `flutter build web` is expensive; the preview service owns the warm build.
   if (executable === 'flutter' && args[0] === 'build' && args[1] === 'web') {

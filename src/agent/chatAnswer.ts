@@ -8,6 +8,7 @@
 
 import { OpenRouterClient, budgetHistory, type LLMMessage } from './llmClient';
 import { keyPool } from './keyPool';
+import { supabase } from '@/services/supabase';
 
 const CHAT_SYSTEM_PROMPT = `
 You are the FlutterForge in-workspace assistant: friendly, concise, expert in
@@ -21,8 +22,9 @@ Rules:
 - NEVER invent file contents, NEVER wrap anything in a code block with a
   filepath="..." attribute, and NEVER claim you changed files — you cannot
   modify the project in this mode.
-- If they seem to want a change ("add X", "fix Y"), briefly say what you'd do
-  and invite them to say the word (e.g. "Say 'add it' and I'll implement it").
+- Answer the request they actually made. Do not ask them to repeat a clear
+  instruction or say a magic phrase. The builder routes requested code changes
+  to the project generation pipeline.
 - No TODOs, no boilerplate, no asking for information you already have.
 `.trim();
 
@@ -34,6 +36,7 @@ export interface ChatAnswerContext {
   model?: string;
   onProgress?: (message: string) => void;
   onToken?: (token: string) => void;
+  onRetry?: (message: string) => void;
   signal?: AbortSignal;
 }
 
@@ -84,6 +87,9 @@ export async function answerGeneralQuestion(
   const canned = offlineCannedReply(question);
   if (canned) return canned;
 
+  const unavailableReply = () =>
+    `I received your request, but I couldn't reach an AI model to answer it reliably. No project files were changed. Check the AI connection or API key, then retry your request.`;
+
   let apiKey = ctx.apiKey;
   if (!apiKey) {
     try {
@@ -92,19 +98,6 @@ export async function answerGeneralQuestion(
       apiKey = '';
     }
   }
-  if (!apiKey) {
-    throw new Error(
-      'I need an AI key to answer that — add your OpenRouter key to keep chatting. (Building apps still works offline.)',
-    );
-  }
-
-  ctx.onProgress?.('Thinking...');
-  const client = new OpenRouterClient({
-    apiKey,
-    model: resolveModel(ctx.model),
-    temperature: 0.7,
-  });
-
   const messages: LLMMessage[] = [
     {
       role: 'system',
@@ -120,12 +113,39 @@ export async function answerGeneralQuestion(
   messages.push({ role: 'user', content: question });
 
   ctx.onProgress?.('Answering...');
-  const reply = (await client.chatStream(messages, {
+  if (!apiKey) {
+    try {
+      const { data, error } = await supabase.functions.invoke('ai-generate', {
+        body: { mode: 'chat', messages },
+      });
+      if (error || typeof data?.answer !== 'string' || !data.answer.trim()) return unavailableReply();
+      ctx.onToken?.(data.answer);
+      return data.answer.trim();
+    } catch {
+      return unavailableReply();
+    }
+  }
+
+  keyPool.addKey(apiKey);
+  ctx.onProgress?.('Thinking...');
+  const client = new OpenRouterClient({
+    model: resolveModel(ctx.model),
     temperature: 0.7,
-    maxTokens: 1500,
-    onToken: ctx.onToken,
-    signal: ctx.signal,
-  })).trim();
-  if (!reply) throw new Error('The AI returned an empty reply — please try again.');
-  return reply;
+  });
+  try {
+    const reply = (await client.chatStream(messages, {
+      temperature: 0.7,
+      maxTokens: 1500,
+      idleTimeoutMs: 15000,
+      timeoutMs: 45000,
+      onToken: ctx.onToken,
+      onRetry: ctx.onRetry,
+      signal: ctx.signal,
+    })).trim();
+    return reply || unavailableReply();
+  } catch (error) {
+    if (ctx.signal?.aborted) throw error;
+    ctx.onProgress?.('AI service unavailable — returning a clear status instead of leaving the request unanswered.');
+    return unavailableReply();
+  }
 }

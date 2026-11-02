@@ -1,16 +1,15 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkspacePage } from './WorkspacePage';
 
+const { mockUseProjectStore } = vi.hoisted(() => ({
+  mockUseProjectStore: vi.fn(),
+}));
+
 vi.mock('@/stores/project.store', () => ({
-  useProjectStore: () => ({
-    currentProject: null,
-    loading: false,
-    loadProject: vi.fn(),
-    clearCurrent: vi.fn(),
-  }),
+  useProjectStore: mockUseProjectStore,
 }));
 
 vi.mock('@/stores/workspace.store', () => ({
@@ -24,7 +23,7 @@ vi.mock('@/stores/workspace.store', () => ({
 }));
 
 vi.mock('@/hooks/useKeyboardShortcuts', () => ({ useKeyboardShortcuts: vi.fn() }));
-vi.mock('@/features/workspace/WorkspaceToolbar', () => ({ WorkspaceToolbar: () => null }));
+vi.mock('@/features/workspace/WorkspaceToolbar', () => ({ WorkspaceToolbar: () => <div>WorkspaceHeader</div> }));
 vi.mock('@/features/workspace/AIBuilderPanel', () => ({ AIBuilderPanel: () => null }));
 vi.mock('@/features/workspace/FileExplorer', () => ({ FileExplorer: () => null }));
 vi.mock('@/features/workspace/CodeEditor', () => ({ CodeEditor: () => null }));
@@ -38,6 +37,16 @@ vi.mock('@/features/workspace/ExportView', () => ({ ExportView: () => null }));
 vi.mock('@/features/workspace/CommandPalette', () => ({ CommandPalette: () => null }));
 
 describe('WorkspacePage routing', () => {
+  beforeEach(() => {
+    mockUseProjectStore.mockReset();
+    mockUseProjectStore.mockReturnValue({
+      currentProject: null,
+      loading: false,
+      loadProject: vi.fn(),
+      clearCurrent: vi.fn(),
+    });
+  });
+
   afterEach(() => cleanup());
 
   it('redirects to the dashboard when the requested project is missing', async () => {
@@ -51,5 +60,24 @@ describe('WorkspacePage routing', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeTruthy();
+  });
+
+  it('renders the workspace header when a project is loaded', async () => {
+    mockUseProjectStore.mockReturnValue({
+      currentProject: { id: 'proj-1', name: 'Sample Project', status: 'ready' },
+      loading: false,
+      loadProject: vi.fn(),
+      clearCurrent: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/project/proj-1']}>
+        <Routes>
+          <Route path="/project/:projectId" element={<WorkspacePage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('WorkspaceHeader')).toBeTruthy();
   });
 });

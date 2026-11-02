@@ -47,11 +47,29 @@ function sendJson(res, status, body) {
 }
 
 /** @param {import('node:http').ServerResponse} res */
-function applyCors(res, origin) {
-  res.setHeader('Access-Control-Allow-Origin', origin || '*');
+function applyCors(res, origin, requestHost) {
+  // The harness is a loopback service with filesystem and command access.
+  // Never reflect arbitrary Origin values: that would let any website use it
+  // as a privileged localhost bridge.
+  if (origin && isAllowedLocalOrigin(origin, requestHost)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
   res.setHeader('Access-Control-Max-Age', '86400');
+}
+
+function isAllowedLocalOrigin(origin, requestHost = '') {
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(url.hostname)) return false;
+    // Accept same-origin packaged requests and the known Vite dev ports.
+    const configured = (process.env.FLUTTERFORGE_ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean);
+    return url.host === requestHost || ['5173', '5175'].includes(url.port) || configured.includes(origin);
+  } catch {
+    return false;
+  }
 }
 
 /** @param {import('node:http').IncomingMessage} req */
@@ -209,7 +227,12 @@ function routeProjectId(pathname) {
 
 async function handleRequest(req, res) {
   const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
-  applyCors(res, origin);
+  applyCors(res, origin, req.headers.host || '');
+
+  if (origin && !isAllowedLocalOrigin(origin, req.headers.host || '')) {
+    sendJson(res, 403, { error: 'Origin is not allowed to access the local FlutterForge engine.' });
+    return;
+  }
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -220,7 +243,20 @@ async function handleRequest(req, res) {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const pathname = url.pathname;
 
-  if (pathname === '/health' || pathname === '/api/harness/health') {
+  // The UI polls this endpoint before starting a generation. Keep readiness
+  // independent of the DSH CLI version probe (which can take several seconds
+  // on a cold start); the stream route performs the runtime check itself.
+  if (pathname === '/api/harness/health') {
+    sendJson(res, 200, {
+      ok: true,
+      engine: 'deepseek-harness',
+      pid: process.pid,
+      uptime: Math.round(process.uptime()),
+    });
+    return;
+  }
+
+  if (pathname === '/health') {
     const runtime = await getRuntimeInfo();
     sendJson(res, 200, {
       ok: true,

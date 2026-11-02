@@ -219,7 +219,6 @@ export function PreviewPanel() {
             title="Real Flutter Web Preview"
             className="w-full h-full border-0 bg-slate-950"
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-modals"
-            allow="clipboard-write; geolocation; microphone; camera"
           />
           {/* Live badge */}
           <div className="absolute top-2.5 right-2.5 z-30 pointer-events-none">
@@ -352,6 +351,40 @@ export function PreviewPanel() {
 
   return (
     <div className={cn('flex flex-col bg-[var(--ff-bg)]', fullscreen ? 'fixed inset-0 z-50' : 'h-full')}>
+      <div className="flex items-center justify-between gap-2 border-b border-[var(--ff-border)] bg-[var(--ff-surface)] px-2 py-1.5 shrink-0">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="rounded-md border border-[var(--ff-border)] bg-[var(--ff-bg)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--ff-text-dim)]">
+            Preview
+          </div>
+          <div className="flex items-center gap-2 text-[10px] text-[var(--ff-text-muted)]">
+            <span className={cn(
+              'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-medium',
+              isRunning ? 'bg-emerald-500/10 text-emerald-400' : isBuilding ? 'bg-indigo-500/10 text-indigo-400' : status === 'failed' ? 'bg-red-500/10 text-red-400' : 'bg-[var(--ff-surface-2)] text-[var(--ff-text-dim)]'
+            )}>
+              <span className={cn('h-1.5 w-1.5 rounded-full', isRunning ? 'bg-emerald-400 animate-pulse' : isBuilding ? 'bg-indigo-400 animate-pulse' : status === 'failed' ? 'bg-red-400' : 'bg-[var(--ff-text-dim)]')} />
+              {isRunning ? 'Live' : isBuilding ? 'Building' : status === 'failed' ? 'Failed' : 'Ready'}
+            </span>
+          </div>
+        </div>
+        {hasProject && (
+          <button
+            onClick={handleCompileWeb}
+            disabled={isBuilding}
+            className={cn(
+              'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-medium transition-all disabled:opacity-50',
+              isRunning
+                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                : isBuilding
+                  ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+                  : 'bg-[var(--ff-primary)]/12 text-[var(--ff-primary)] border border-[var(--ff-primary)]/20'
+            )}
+          >
+            {isBuilding ? <Loader2 size={11} className="animate-spin" /> : <Hammer size={11} />}
+            {isBuilding ? 'Compiling…' : 'Compile'}
+          </button>
+        )}
+      </div>
+
       {/* ── Toolbar ─────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-2 sm:px-3 py-2 border-b border-[var(--ff-border)] bg-[var(--ff-surface)] shrink-0">
         {/* Device tabs */}
@@ -375,39 +408,6 @@ export function PreviewPanel() {
             );
           })}
         </div>
-
-        {/* Build / Rebuild Button */}
-        {hasProject && (
-          <button
-            onClick={handleCompileWeb}
-            disabled={isBuilding}
-            className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all disabled:opacity-50',
-              isRunning
-                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
-                : isBuilding
-                  ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
-                  : 'ff-btn-primary'
-            )}
-          >
-            {isBuilding ? (
-              <>
-                <Loader2 size={12} className="animate-spin" />
-                <span>Compiling…</span>
-              </>
-            ) : isRunning ? (
-              <>
-                <RefreshCw size={12} />
-                <span>Rebuild Web</span>
-              </>
-            ) : (
-              <>
-                <Hammer size={12} />
-                <span>Compile Web</span>
-              </>
-            )}
-          </button>
-        )}
 
         {/* Zoom controls */}
         <div className="hidden md:flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--ff-bg)] border border-[var(--ff-border)]">

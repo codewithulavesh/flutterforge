@@ -134,6 +134,7 @@ export function createEventProjector({ workspace, snapshotBefore, emit }) {
       case 'session':
         currentStep = 1;
         agentEvent('analyzing', `Harness session ready (${event.sessionId ?? 'new'}).`, {
+          kind: 'phase',
           detail: event.cwd ? `Workspace: ${event.cwd}` : undefined,
         });
         return;
@@ -141,10 +142,10 @@ export function createEventProjector({ workspace, snapshotBefore, emit }) {
       case 'status': {
         if (event.phase === 'turn_start') {
           currentStep = Math.max(currentStep, 2);
-          agentEvent('planning', `Harness turn ${event.turn ?? 1} started.`);
+          agentEvent('planning', `Harness turn ${event.turn ?? 1} started.`, { kind: 'phase' });
         } else if (event.phase === 'step_start') {
           currentStep = Math.max(currentStep, 3);
-          agentEvent(sawWrite ? 'code_generation' : 'planning', `Agent step ${event.step ?? 1}: reasoning and tool use…`);
+          agentEvent(sawWrite ? 'code_generation' : 'planning', `Agent step ${event.step ?? 1}: reasoning and tool use…`, { kind: 'phase' });
         } else if (event.phase === 'step_end' && event.usage) {
           const used = Number(event.usage.totalTokens ?? 0);
           if (used > 0) log(`[usage] step ${event.step}: ${used} tokens`);
@@ -165,6 +166,7 @@ export function createEventProjector({ workspace, snapshotBefore, emit }) {
         lastThoughtAt = now;
         lastThought = thought;
         agentEvent('planning', 'Reasoning about the next change…', {
+          kind: 'reasoning',
           thought: thought.slice(0, MAX_THOUGHT_CHARS),
         });
         return;
@@ -184,25 +186,62 @@ export function createEventProjector({ workspace, snapshotBefore, emit }) {
         const filePath = typeof input.file_path === 'string'
           ? relativeArtifactPath(workspace, input.file_path) ?? ''
           : '';
+        const toolCallId = String(event.callId ?? '');
+        const toolInput = {
+          ...(filePath ? { file_path: filePath } : {}),
+          ...(typeof input.command === 'string' ? { command: String(input.command).slice(0, 400) } : {}),
+          ...(typeof input.pattern === 'string' ? { pattern: String(input.pattern).slice(0, 200) } : {}),
+        };
 
         if (tool === 'write' || tool === 'edit') {
           sawWrite = true;
           currentStep = Math.max(currentStep, 4);
-          if (filePath) toolPaths.set(String(event.callId ?? ''), filePath);
+          if (filePath) toolPaths.set(toolCallId, filePath);
           agentEvent('code_generation', `${tool === 'write' ? 'Writing' : 'Editing'} ${filePath || 'a project file'}…`, {
+            kind: 'tool',
+            tool,
+            toolCallId,
+            toolInput,
+            filePath: filePath || undefined,
             activeFile: filePath || undefined,
           });
         } else if (tool === 'bash') {
           const command = String(input.command ?? '').replace(/\s+/g, ' ').slice(0, 160);
-          agentEvent('validation', command ? `Running: ${command}` : 'Running a validation command…');
+          agentEvent('validation', command ? `Running: ${command}` : 'Running a validation command…', {
+            kind: 'tool',
+            tool,
+            toolCallId,
+            toolInput,
+          });
         } else if (tool === 'read' || tool === 'read_image' || tool === 'glob' || tool === 'grep') {
-          agentEvent('analyzing', `${tool === 'read' ? 'Reading' : 'Searching'} ${filePath || 'the workspace'}…`);
+          agentEvent('analyzing', `${tool === 'read' ? 'Reading' : 'Searching'} ${filePath || 'the workspace'}…`, {
+            kind: 'tool',
+            tool,
+            toolCallId,
+            toolInput,
+            filePath: filePath || undefined,
+          });
         } else if (tool.startsWith('mcp__dart__')) {
-          agentEvent('validation', `Dart tool: ${tool.replace('mcp__dart__', '')}`);
+          agentEvent('validation', `Dart tool: ${tool.replace('mcp__dart__', '')}`, {
+            kind: 'tool',
+            tool,
+            toolCallId,
+            toolInput,
+          });
         } else if (tool === 'todo_write') {
-          agentEvent('planning', 'Updating the generation plan…');
+          agentEvent('planning', 'Updating the generation plan…', {
+            kind: 'tool',
+            tool,
+            toolCallId,
+            toolInput,
+          });
         } else {
-          agentEvent(currentPhase, `Tool call: ${tool}`);
+          agentEvent(currentPhase, `Tool call: ${tool}`, {
+            kind: 'tool',
+            tool,
+            toolCallId,
+            toolInput,
+          });
         }
         return;
       }
@@ -213,12 +252,28 @@ export function createEventProjector({ workspace, snapshotBefore, emit }) {
         toolPaths.delete(callId);
         if (event.status === 'error') {
           const message = String(event.result ?? 'tool failed').split('\n')[0]?.slice(0, 220);
-          agentEvent('validation', `Tool error: ${message}`);
+          agentEvent('validation', `Tool error: ${message}`, {
+            kind: 'tool_result',
+            toolCallId: callId,
+            status: 'error',
+          });
           return;
         }
         if (filePath) {
           await emitFile(filePath);
-          agentEvent('code_generation', `✓ ${filePath}`, { activeFile: filePath });
+          agentEvent('code_generation', `✓ ${filePath}`, {
+            kind: 'tool_result',
+            toolCallId: callId,
+            status: 'ok',
+            filePath,
+            activeFile: filePath,
+          });
+        } else {
+          agentEvent(currentPhase, `Tool completed${event.tool ? `: ${event.tool}` : ''}.`, {
+            kind: 'tool_result',
+            toolCallId: callId,
+            status: 'ok',
+          });
         }
         return;
       }

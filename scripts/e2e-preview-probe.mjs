@@ -1,10 +1,17 @@
 // E2E probe: replicate the frontend preview-build flow against the live engine.
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PROJECT = process.argv[2] || '04b051db-8271-4b12-a6f0-918a2a7f834d';
 const BASE = 'http://127.0.0.1:8787';
-const WS = path.join(process.env.HOME, '.flutterforge', 'workspaces', PROJECT);
+const DATA_ROOT = process.env.FLUTTERFORGE_DATA_DIR || path.join(ROOT, '.flutterforge');
+const WORKSPACES_ROOT = process.env.FLUTTERFORGE_WORKSPACES || path.join(DATA_ROOT, 'workspaces');
+const WS = path.join(
+  WORKSPACES_ROOT,
+  PROJECT,
+);
 const SKIP = new Set(['.dart_tool', 'build', '.git', 'node_modules', '.flutterforge-pubspec-hash', '.flutterforge', '.dsh', '.idea', '.vscode']);
 
 async function walk(dir, acc = []) {

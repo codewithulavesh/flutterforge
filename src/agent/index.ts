@@ -45,14 +45,19 @@ export class FlutterSupabaseAgent {
     const emit = (event: Omit<AgentEvent, 'timestamp'>) => {
       const fullEvent: AgentEvent = { ...event, timestamp: new Date().toISOString() };
       logs.push(`[${fullEvent.phase.toUpperCase()}] ${fullEvent.message}`);
+      try {
+        const { useTerminalStore } = require('@/stores/terminal.store');
+        useTerminalStore.getState().addAgentEvent(fullEvent as any);
+      } catch {
+        // browser / non-cjs fallback
+        import('@/stores/terminal.store').then((m) => m.useTerminalStore.getState().addAgentEvent(fullEvent as any)).catch(() => {});
+      }
       options.onEvent?.(fullEvent);
     };
 
-    const apiKey =
-      options.modelConfig?.apiKey ||
-      (typeof import.meta !== 'undefined' && import.meta.env?.VITE_OPENROUTER_API_KEY) ||
-      (typeof process !== 'undefined' && (process.env?.VITE_OPENROUTER_API_KEY || process.env?.OPENROUTER_API_KEY)) ||
-      '';
+    // Provider credentials must come from an explicit user setting or a
+    // trusted server endpoint. VITE_* values are bundled into public JS.
+    const apiKey = options.modelConfig?.apiKey || '';
 
     const stateManagement = options.stateManagement || 'provider';
     const conversationHistory = options.conversationHistory || [];
@@ -130,6 +135,7 @@ export class FlutterSupabaseAgent {
               conversationHistory,
               (msg) => emit({ phase: 'incremental_edit', stepNumber: 4, totalSteps: TOTAL_STEPS, message: msg }),
               context.usesSupabase !== false,
+              options.signal,
             );
 
             if (editFiles.length > 0) {
@@ -143,6 +149,7 @@ export class FlutterSupabaseAgent {
               break;
             }
           } catch (e) {
+            if (options.signal?.aborted) throw new Error('Generation cancelled by user');
             if (attempt === 0) {
               emit({
                 phase: 'incremental_edit',
@@ -156,14 +163,16 @@ export class FlutterSupabaseAgent {
         }
 
         if (!editSuccess) {
-          emit({
-            phase: 'incremental_edit',
-            stepNumber: 4,
-            totalSteps: TOTAL_STEPS,
-            message: 'Incremental edit failed - falling back to full generation...',
-          });
-          // Fall through to full generation
+          throw new Error(
+            'The AI could not produce a safe incremental edit after two attempts. Your existing files were left unchanged; retry when the AI service is available.',
+          );
         }
+      }
+
+      if (isIncremental && !apiKey && context.existingFiles.length > 0) {
+        throw new Error(
+          'An AI key is required to make this project change safely. Your existing files were left unchanged.',
+        );
       }
 
       // ── FULL GENERATION PATH ─────────────────────────────────────────
@@ -181,15 +190,17 @@ export class FlutterSupabaseAgent {
           try {
             plan = await llmClient.planLive(prompt, context, stateManagement, (msg) => {
               emit({ phase: 'planning', stepNumber: 3, totalSteps: TOTAL_STEPS, message: msg });
-            }, conversationHistory);
+            }, conversationHistory, options.signal);
           } catch {
+            if (options.signal?.aborted) throw new Error('Generation cancelled by user');
             // Attempt 2: retry with next model in chain (silent — no scary error message)
             try {
               llmClient.resetModelChain();
               plan = await llmClient.planLive(prompt, context, stateManagement, (msg) => {
                 emit({ phase: 'planning', stepNumber: 3, totalSteps: TOTAL_STEPS, message: msg });
-              }, conversationHistory);
+              }, conversationHistory, options.signal);
             } catch {
+              if (options.signal?.aborted) throw new Error('Generation cancelled by user');
               // Final fallback: deterministic structured planner (always works, no LLM needed)
               emit({
                 phase: 'planning',
@@ -238,6 +249,7 @@ export class FlutterSupabaseAgent {
               prompt, plan, semanticSummary, retrievedPatterns, conversationHistory,
               (msg) => emit({ phase: 'code_generation', stepNumber: 4, totalSteps: TOTAL_STEPS, message: msg }),
               context.usesSupabase !== false,
+              options.signal,
             );
 
             if (liveFiles.length > 0) {
@@ -250,6 +262,7 @@ export class FlutterSupabaseAgent {
               liveSuccess = true;
             }
           } catch (e) {
+            if (options.signal?.aborted) throw new Error('Generation cancelled by user');
             emit({
               phase: 'code_generation',
               stepNumber: 4,
@@ -266,6 +279,7 @@ export class FlutterSupabaseAgent {
                 prompt, plan, semanticSummary, retrievedPatterns, conversationHistory,
                 (msg) => emit({ phase: 'code_generation', stepNumber: 4, totalSteps: TOTAL_STEPS, message: msg }),
                 context.usesSupabase !== false,
+                options.signal,
               );
 
               if (liveFiles.length > 0) {
@@ -278,6 +292,7 @@ export class FlutterSupabaseAgent {
                 liveSuccess = true;
               }
             } catch {
+              if (options.signal?.aborted) throw new Error('Generation cancelled by user');
               // Continue to template fallback
             }
           }

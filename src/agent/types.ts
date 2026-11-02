@@ -230,6 +230,8 @@ export interface AgentGenerationOptions {
   includeSqlMigrations?: boolean;
   stateManagement?: 'riverpod' | 'provider' | 'bloc' | 'change_notifier';
   onEvent?: AgentEventListener;
+  /** Raw harness file artefact (path, content, action) as it is written. */
+  onFile?: (file: { path: string; content: string; action: 'created' | 'modified' | 'deleted'; language: string; node: string }) => void;
   isIncremental?: boolean;
   conversationHistory?: Array<{ role: string; content: string }>;
   /** AbortSignal from the UI Stop button — cancels backend streams / LLM calls. */

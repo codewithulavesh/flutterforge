@@ -53,7 +53,9 @@ const WEAK_BUILD: RegExp = new RegExp(
     'order', 'product', 'categor', 'notif', 'upload', 'image', 'photo',
     'avatar', 'map', 'location', 'chat', 'message', 'comment', 'post',
     'feed', 'color', 'colour', 'font', 'icon', 'logo', 'card', 'badge',
-    'animat', 'transition', 'gradient', 'dashboard', 'supabase', 'firebase',
+    'animat', 'transition', 'gradient', 'dashboard', 'responsive', 'efficient',
+    'performant', 'professional', 'attractive', 'polished', 'accessible', 'faster',
+    'optimiz', 'dashboard', 'supabase', 'firebase',
     'database', 'sql', 'table', 'schema', 'rls', 'realtime', 'stream',
     'api', 'backend', 'model', 'service', 'provider', 'riverpod', 'bloc',
     'dependenc', 'package', 'pubspec', 'error', 'bug', 'crash', 'broken',
@@ -61,6 +63,16 @@ const WEAK_BUILD: RegExp = new RegExp(
   ].join('|'),
   'i',
 );
+
+/** Explicit edit verbs used to distinguish "how do I add X?" from a pure how-to. */
+const CHANGE_VERB: RegExp =
+  /\b(?:add|create|implement|make|change|update|modify|edit|adjust|improve|enhance|remove|delete|fix|repair|refactor|rename|redesign|restyle|rework|replace|optimize|speed\s+up)\b/i;
+
+/** Factual questions about FlutterForge must not become edits due to verb stems. */
+const META_QUESTION: RegExp =
+  /^(?:who|what)\s+(?:created|built|made|developed|founded|owns|runs|maintains)\b/i;
+const DIRECT_CHANGE_REQUEST: RegExp =
+  /^(?:please\b|can\s+you\b|could\s+you\b|would\s+you\b|i\s+(?:want|need)\s+you\s+to\b)/i;
 
 /** Question openers — conversational unless a strong verb is present. */
 const QUESTION_OPENER: RegExp =
@@ -95,13 +107,17 @@ export function classifyChatIntent(rawContent: string): ChatIntent {
     .trim();
 
   if (CHAT_ONLY_PATTERNS.some((re) => re.test(lower))) return 'chat';
+  if (DIRECT_CHANGE_REQUEST.test(lower) && CHANGE_VERB.test(lower)) return 'build';
+  if (META_QUESTION.test(lower)) return 'chat';
+  if (TROUBLE.test(lower)) return 'build';
+  // A question mark does not make a requested edit informational. Route
+  // explicit project changes such as "How can I make this responsive?" to
+  // the builder before applying the general how-to rule.
+  if (CHANGE_VERB.test(lower) && WEAK_BUILD.test(lower)) return 'build';
   if (HOW_TO_PATTERN.test(lower)) return 'chat';
   if (STRONG_BUILD.test(lower)) return 'build';
   // "How about dark mode?" proposes a change — build it.
   if (/^how\s+about\b/i.test(lower) && WEAK_BUILD.test(lower)) return 'build';
-  // Broken app reports ("why is login failing?", "white screen?") want a fix,
-  // even when phrased as questions.
-  if (TROUBLE.test(lower)) return 'build';
   if (lower.endsWith('?') || QUESTION_OPENER.test(lower)) return 'chat';
   if (WEAK_BUILD.test(lower)) return 'build';
 

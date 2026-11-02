@@ -1,16 +1,17 @@
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { getProjectDataRoot } from './paths.mjs';
 import net from 'node:net';
 import { createHash } from 'node:crypto';
 import { materializeFiles, safeRelativePath } from './harness/workspace.mjs';
-import { findFlutter } from './harness/flutter.mjs';
+import { ensureFlutter } from './harness/managedFlutter.mjs';
 import { sanitizeSdkConstraint, sanitizeFlutterConstraint, fixInvalidPlainScalars, getToolchainVersions } from './harness/pubspecFix.mjs';
 
 const MAX_LOG_LINES = 500;
 const BUILD_TIMEOUT_MS = Number(process.env.FLUTTERFORGE_PREVIEW_TIMEOUT_MS || 15 * 60 * 1000);
 const PUB_GET_TIMEOUT_MS = 4 * 60 * 1000;
+const ANALYZE_TIMEOUT_MS = 3 * 60 * 1000;
 
 /** @param {string} projectId */
 function projectKey(projectId) {
@@ -167,7 +168,7 @@ function spawnWebRunner(command, args, options) {
 export function createPreviewService(options = {}) {
   const rootDir = options.rootDir
     || process.env.FLUTTERFORGE_PREVIEWS
-    || path.join(os.homedir(), '.flutterforge', 'previews');
+    || path.join(getProjectDataRoot(), 'previews');
 
   /** @type {Map<string, any>} */
   const sessions = new Map();
@@ -244,8 +245,9 @@ export function createPreviewService(options = {}) {
         if (session.logs.length > MAX_LOG_LINES) session.logs.shift();
       };
       const directory = previewDir(projectId);
-      const flutterBin = findFlutter();
       try {
+        const flutterBin = await ensureFlutter({ onProgress: log });
+        if (session.cancelled) throw new Error('cancelled');
         // A warm runner keeps the old files open; stop it before rewriting.
         killRunner(key);
         await fs.mkdir(directory, { recursive: true });
@@ -265,7 +267,9 @@ export function createPreviewService(options = {}) {
           await fs.access(webIndex);
         } catch {
           log('[preview] Scaffolding the Flutter web runner…');
-          const scaffold = path.join(os.tmpdir(), `flutterforge-web-${key}-${Date.now().toString(36)}`);
+          const scratchRoot = path.join(getProjectDataRoot(), 'tmp');
+          await fs.mkdir(scratchRoot, { recursive: true });
+          const scaffold = path.join(scratchRoot, `flutterforge-web-${key}-${Date.now().toString(36)}`);
           const pubspec = await fs.readFile(path.join(directory, 'pubspec.yaml'), 'utf8').catch(() => '');
           const packageName = pubspec.match(/^name\s*:\s*([A-Za-z0-9_]+)/m)?.[1] || 'flutterforge_preview';
           const created = await runStreaming(
@@ -402,6 +406,26 @@ export function createPreviewService(options = {}) {
         }
 
         if (session.cancelled) throw new Error('cancelled');
+
+        // Fail fast: a quick `flutter analyze` catches the engine's broken
+        // Dart before the minutes-long compile of the warm runner. Only real
+        // errors block the preview — lint/info noise must not.
+        log('[preview] Running flutter analyze…');
+        let analyzeSawError = false;
+        const analyze = await runStreaming(flutterBin, ['analyze', '--no-pub'], {
+          cwd: directory,
+          timeoutMs: ANALYZE_TIMEOUT_MS,
+          onLine: (line) => {
+            if (/error\s+•|\berror -/i.test(line)) analyzeSawError = true;
+            log(line);
+          },
+        });
+        if (analyzeSawError) {
+          throw new Error('flutter analyze found Dart errors — repair the project before the preview can start.');
+        }
+        if (!analyze.ok && analyze.error) {
+          throw new Error(`flutter analyze failed${analyze.error ? `: ${analyze.error}` : ''}`);
+        }
 
         const mode = process.env.FLUTTERFORGE_PREVIEW_MODE || 'run';
         if (mode === 'build') {

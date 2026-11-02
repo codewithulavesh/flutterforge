@@ -1,5 +1,4 @@
 import { promises as fs } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createEventProjector } from './events.mjs';
@@ -16,13 +15,14 @@ import {
 import { buildAgentsMd, buildTaskPrompt } from './prompt.mjs';
 import { normalizeProjectPackage, pruneSupabaseArtifacts } from './normalize.mjs';
 import { ensureSkills } from './skills.mjs';
+import { getProjectDataRoot } from '../paths.mjs';
 
 const SESSION_FILE = '.flutterforge/session.json';
 const ACTIVE_PROJECTS = new Set();
 
 /** @returns {string} */
 export function getWorkspacesRoot() {
-  return process.env.FLUTTERFORGE_WORKSPACES || path.join(os.homedir(), '.flutterforge', 'workspaces');
+  return process.env.FLUTTERFORGE_WORKSPACES || path.join(getProjectDataRoot(), 'workspaces');
 }
 
 /**
@@ -222,6 +222,7 @@ export async function runGeneration(input) {
         message: `Aligned ${normalized.changed.length} file(s) to package ${input.appId}.`,
         timestamp: new Date().toISOString(),
         node: 'generate_batch',
+        kind: 'phase',
       });
     }
 
@@ -235,6 +236,7 @@ export async function runGeneration(input) {
           message: 'Removed unused Supabase scaffolding (local-only app).',
           timestamp: new Date().toISOString(),
           node: 'validate_code',
+          kind: 'phase',
         });
       }
     }
@@ -266,6 +268,7 @@ export async function runGeneration(input) {
           message: `Recovered ${changes.length} file(s) from the harness answer.`,
           timestamp: new Date().toISOString(),
           node: 'harness',
+          kind: 'phase',
         });
       }
     }

@@ -598,11 +598,7 @@ export class VectorStore {
    * Generates text embedding vector using nomic-embed-text or OpenAI text-embedding-3-small via OpenRouter
    */
   public static async embed(text: string, apiKey?: string): Promise<number[] | null> {
-    const key =
-      apiKey ||
-      (typeof import.meta !== 'undefined' && import.meta.env?.VITE_OPENROUTER_API_KEY) ||
-      (typeof process !== 'undefined' && (process.env?.VITE_OPENROUTER_API_KEY || process.env?.OPENROUTER_API_KEY)) ||
-      '';
+    const key = apiKey || '';
 
     if (!key || this.embedUnavailable) return null;
 

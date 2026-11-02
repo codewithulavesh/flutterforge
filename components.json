@@ -12,7 +12,9 @@
   },
   "aliases": {
     "components": "@/components",
-    "utils": "@/utils"
+    "ui": "@/components/ui",
+    "utils": "@/utils/cn",
+    "lib": "@/lib"
   },
   "registries": {
     "@reactbits-starter": {
@@ -27,6 +29,7 @@
         "Authorization": "Bearer ${REACTBITS_LICENSE_KEY}"
       }
     },
-    "@react-bits": "https://reactbits.dev/r/{name}.json"
+    "@react-bits": "https://reactbits.dev/r/{name}.json",
+    "@ai-elements": "https://ai-sdk.dev/elements/api/registry/{name}.json"
   }
 }

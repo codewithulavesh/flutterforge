@@ -109,13 +109,19 @@ Deno.serve(async (req: Request) => {
     }
 
     const { messages, files, mode } = await req.json();
+    const isChat = mode === "chat";
 
     const conversationMessages: Array<{ role: string; content: string }> = [
-      { role: "system", content: SYSTEM_PROMPT },
+      {
+        role: "system",
+        content: isChat
+          ? "You are FlutterForge's AI assistant. Answer clearly and accurately. Use supplied project context when available, state when information is missing, and never claim to have changed files."
+          : SYSTEM_PROMPT,
+      },
     ];
 
     // Include existing files as context (smart: only paths + first 200 lines per file)
-    if (files && files.length > 0) {
+    if (!isChat && files && files.length > 0) {
       if (mode === "new") {
         // For new generation, include file list summary
         const fileList = files.map((f: { path: string }) => f.path).join("\n");
@@ -164,8 +170,8 @@ Deno.serve(async (req: Request) => {
           body: JSON.stringify({
             model,
             messages: conversationMessages,
-            temperature: 0.15,
-            max_tokens: clampMaxTokens(model, mode === "edit" ? 32000 : 64000),
+            temperature: isChat ? 0.7 : 0.15,
+            max_tokens: isChat ? 1500 : clampMaxTokens(model, mode === "edit" ? 32000 : 64000),
           }),
         });
 
@@ -177,6 +183,12 @@ Deno.serve(async (req: Request) => {
 
         const data = await response.json();
         const aiContent = data.choices?.[0]?.message?.content ?? "";
+
+        if (isChat && typeof aiContent === "string" && aiContent.trim()) {
+          return new Response(JSON.stringify({ answer: aiContent.trim(), model }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
 
         // Parse files from markdown code blocks
         const files: Array<{ path: string; content: string }> = [];

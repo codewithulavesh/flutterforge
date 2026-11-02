@@ -1,8 +1,16 @@
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { getProjectDataRoot } from '../paths.mjs';
 
 const IS_WINDOWS = process.platform === 'win32';
+
+export function managedFlutterPath(options = {}) {
+  const platform = options.platform || (process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux');
+  const arch = options.arch || process.arch;
+  const root = options.root || path.join(getProjectDataRoot(), 'toolchains', 'flutter', `${platform}-${arch}`);
+  return path.join(root, 'flutter', 'bin', IS_WINDOWS ? 'flutter.bat' : 'flutter');
+}
 
 /**
  * Resolve the Flutter SDK executable. GUI-launched desktop apps do not inherit
@@ -18,6 +26,9 @@ export function findFlutter(options = {}) {
   const home = options.home ?? os.homedir();
   const binary = IS_WINDOWS ? 'flutter.bat' : 'flutter';
   const candidates = [];
+
+  const managed = managedFlutterPath({ env });
+  if (existsSync(managed)) candidates.push(managed);
 
   if (process.platform === 'darwin') {
     candidates.push(
@@ -51,4 +62,16 @@ export function findFlutter(options = {}) {
     if (candidate && existsSync(candidate)) return candidate;
   }
   return 'flutter';
+}
+
+export function findDart(options = {}) {
+  const env = options.env ?? process.env;
+  if (env.DART_BIN) return env.DART_BIN;
+  const flutter = findFlutter(options);
+  if (path.isAbsolute(flutter) || flutter.includes(path.sep)) {
+    const binary = IS_WINDOWS ? 'dart.exe' : 'dart';
+    const bundledDart = path.join(path.dirname(flutter), 'cache', 'dart-sdk', 'bin', binary);
+    if (existsSync(bundledDart)) return bundledDart;
+  }
+  return 'dart';
 }

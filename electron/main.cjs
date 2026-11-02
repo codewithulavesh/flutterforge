@@ -69,6 +69,9 @@ function startServer({ port = 8787 } = {}) {
         PORT: String(port),
         HOST: '127.0.0.1',
         FLUTTERFORGE_WEB_DIR: webDir(),
+        ...(app.isPackaged
+          ? { FLUTTERFORGE_DATA_DIR: process.env.FLUTTERFORGE_DATA_DIR || path.join(app.getPath('userData'), '.flutterforge') }
+          : {}),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
@@ -384,17 +387,41 @@ function registerIpc() {
     return result.canceled ? null : result.filePaths[0];
   });
 
-  ipcMain.handle('desktop:open-path', async (_event, target) => {
+  const isWorkspacePath = (target) => {
+    const resolved = path.resolve(target);
+    const roots = [
+      process.env.FLUTTERFORGE_WORKSPACES,
+      path.join(app.getPath('userData'), '.flutterforge', 'workspaces'),
+      path.join(app.getAppPath(), '.flutterforge', 'workspaces'),
+    ].filter(Boolean).map((root) => path.resolve(root));
+    return roots.some((root) => resolved === root || resolved.startsWith(`${root}${path.sep}`));
+  };
+  const isTrustedRenderer = (event) => {
+    const frameUrl = event.senderFrame?.url || '';
+    try {
+      const frameOrigin = new URL(frameUrl).origin;
+      return [serverUrl, DEV_URL].filter(Boolean).some((base) => new URL(base).origin === frameOrigin);
+    } catch {
+      return false;
+    }
+  };
+
+  ipcMain.handle('desktop:open-path', async (event, target) => {
+    if (!isTrustedRenderer(event)) return { ok: false, error: 'Untrusted renderer.' };
     if (typeof target !== 'string' || target.trim() === '') return { ok: false, error: 'Invalid path.' };
     const resolved = path.resolve(target);
+    if (!isWorkspacePath(resolved)) return { ok: false, error: 'Only FlutterForge workspace paths can be opened.' };
     if (!existsSync(resolved)) return { ok: false, error: 'Path does not exist.' };
     const error = await shell.openPath(resolved);
     return error ? { ok: false, error } : { ok: true };
   });
 
-  ipcMain.handle('desktop:show-item', (_event, target) => {
+  ipcMain.handle('desktop:show-item', (event, target) => {
+    if (!isTrustedRenderer(event)) return false;
     if (typeof target !== 'string' || target.trim() === '') return false;
-    shell.showItemInFolder(path.resolve(target));
+    const resolved = path.resolve(target);
+    if (!isWorkspacePath(resolved)) return false;
+    shell.showItemInFolder(resolved);
     return true;
   });
 
