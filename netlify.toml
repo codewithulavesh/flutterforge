@@ -1,0 +1,9 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# VITE_PREVIEW_API_URL points at the local preview compiler (http://localhost:3001).
+# It is a public URL, not a credential, but Netlify's secrets scanner flags any
+# configured env var value found in docs/build output. Exempt only this key.
+[build.environment]
+  SECRETS_SCAN_OMIT_KEYS = "VITE_PREVIEW_API_URL"
