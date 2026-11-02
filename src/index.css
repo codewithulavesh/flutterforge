@@ -5,17 +5,17 @@
 @layer base {
   :root {
     color-scheme: dark;
-    --ff-bg: #0a0a0b;
-    --ff-surface: #131316;
-    --ff-surface-2: #1a1a1f;
-    --ff-border: #27272a;
-    --ff-border-hover: #3f3f46;
-    --ff-text: #fafafa;
-    --ff-text-muted: #a1a1aa;
-    --ff-text-dim: #71717a;
-    --ff-primary: #3b82f6;
-    --ff-primary-hover: #2563eb;
-    --ff-primary-dim: #1e3a5f;
+    --ff-bg: #0e1418;
+    --ff-surface: #151d22;
+    --ff-surface-2: #1d292f;
+    --ff-border: #303e44;
+    --ff-border-hover: #46575e;
+    --ff-text: #f2f5f3;
+    --ff-text-muted: #b2c0c2;
+    --ff-text-dim: #91a1a4;
+    --ff-primary: #26bac1;
+    --ff-primary-hover: #42cbd0;
+    --ff-primary-dim: #173a3e;
     --ff-success: #10b981;
     --ff-warning: #f59e0b;
     --ff-error: #ef4444;
@@ -30,14 +30,14 @@
     --ff-brand-ink: #0B3542;
 
     /* RGB companions for Tailwind opacity modifiers (bg-muted/50 etc.). */
-    --ff-bg-rgb: 10 10 11;
-    --ff-surface-rgb: 19 19 22;
-    --ff-surface-2-rgb: 26 26 31;
-    --ff-border-rgb: 39 39 42;
-    --ff-text-rgb: 250 250 250;
-    --ff-text-muted-rgb: 161 161 170;
-    --ff-text-dim-rgb: 113 113 122;
-    --ff-primary-rgb: 59 130 246;
+    --ff-bg-rgb: 14 20 24;
+    --ff-surface-rgb: 21 29 34;
+    --ff-surface-2-rgb: 29 41 47;
+    --ff-border-rgb: 48 62 68;
+    --ff-text-rgb: 242 245 243;
+    --ff-text-muted-rgb: 178 192 194;
+    --ff-text-dim-rgb: 145 161 164;
+    --ff-primary-rgb: 38 186 193;
     --ff-error-rgb: 239 68 68;
   }
 
@@ -380,20 +380,20 @@
   --ff-studio-shadow: 4px 4px 0 #171717;
 }
 
-/* Professional dark studio: charcoal layers, low-contrast hairlines and a
-   warm accent. No cream borders or neon hard shadows in dark mode. */
+/* Professional dark studio: lifted charcoal layers, readable hairlines and
+  brand teal, with warm yellow retained as a secondary accent. */
 [data-theme="dark"] .ff-studio {
-  --ff-bg: #0b0d11;
-  --ff-surface: #14171d;
-  --ff-surface-2: #1b1f27;
-  --ff-border: #2a303b;
-  --ff-border-hover: #3b4350;
-  --ff-text: #f5f1e8;
-  --ff-text-muted: #a9a294;
-  --ff-text-dim: #8b8578;
-  --ff-primary: #f2d45c;
-  --ff-primary-hover: #ffe27a;
-  --ff-primary-dim: #3a3218;
+  --ff-bg: #0e1418;
+  --ff-surface: #151d22;
+  --ff-surface-2: #1d292f;
+  --ff-border: #303e44;
+  --ff-border-hover: #46575e;
+  --ff-text: #f2f5f3;
+  --ff-text-muted: #b2c0c2;
+  --ff-text-dim: #91a1a4;
+  --ff-primary: #26bac1;
+  --ff-primary-hover: #42cbd0;
+  --ff-primary-dim: #173a3e;
   --ff-success: #4ade80;
   --ff-warning: #fbbf24;
   --ff-error: #f87171;
@@ -643,33 +643,40 @@ html {
   }
 }
 
-/* ── Landing dark mode: midnight-teal premium theme ──────────────────────────
+/* ── Landing dark mode: balanced charcoal with teal accents ──────────────────
    Scoped to the landing page (ff-landing) so product surfaces elsewhere keep
-   the studio charcoal look. Deeper blue-black base, teal-tinted hairlines and
-   surfaces, glowing CTAs and glassy accents. */
+   the studio palette. */
 [data-theme="dark"] .ff-studio.ff-landing {
-  --ff-bg: #04070b;
-  --ff-surface: #0a0f16;
-  --ff-surface-2: #0f1621;
-  --ff-border: rgba(140, 200, 210, 0.1);
-  --ff-border-hover: rgba(2, 175, 185, 0.5);
-  --ff-text: #eaf4f4;
-  --ff-text-muted: #93a8b0;
-  --ff-text-dim: #5f7680;
+  --ff-bg: #10191d;
+  --ff-surface: #182429;
+  --ff-surface-2: #223238;
+  --ff-border: rgba(177, 205, 206, 0.18);
+  --ff-border-hover: rgba(38, 186, 193, 0.58);
+  --ff-text: #f2f6f3;
+  --ff-text-muted: #b7c6c7;
+  --ff-text-dim: #91a6a8;
   --ff-primary: #02afb9;
   --ff-primary-hover: #2bc5ce;
   --ff-primary-dim: rgba(2, 175, 185, 0.14);
-  --ff-soft-shadow: 0 0 0 1px rgba(125, 216, 181, 0.05), 0 24px 64px -24px rgba(0, 0, 0, 0.75);
-  --ff-soft-shadow-lg: 0 0 0 1px rgba(125, 216, 181, 0.07), 0 32px 80px -28px rgba(0, 0, 0, 0.85);
-  --ff-glow-teal: 0 0 0 1px rgba(2, 175, 185, 0.25), 0 16px 56px -16px rgba(2, 175, 185, 0.45);
+  --ff-bg-rgb: 16 25 29;
+  --ff-surface-rgb: 24 36 41;
+  --ff-surface-2-rgb: 34 50 56;
+  --ff-border-rgb: 55 73 79;
+  --ff-text-rgb: 242 246 243;
+  --ff-text-muted-rgb: 183 198 199;
+  --ff-text-dim-rgb: 145 166 168;
+  --ff-primary-rgb: 2 175 185;
+  --ff-soft-shadow: 0 1px 0 rgba(230, 245, 242, 0.04), 0 20px 48px -24px rgba(0, 0, 0, 0.55);
+  --ff-soft-shadow-lg: 0 1px 0 rgba(230, 245, 242, 0.05), 0 28px 64px -30px rgba(0, 0, 0, 0.65);
+  --ff-glow-teal: 0 0 0 1px rgba(2, 175, 185, 0.2), 0 14px 40px -20px rgba(2, 175, 185, 0.3);
 }
 
 /* CTAs glow harder at night */
 [data-theme="dark"] .ff-landing .ff-cta {
   box-shadow:
-    0 0 0 1px rgba(2, 175, 185, 0.35),
-    0 12px 32px -10px rgba(2, 175, 185, 0.6),
-    0 0 28px -6px rgba(2, 175, 185, 0.4);
+    0 0 0 1px rgba(2, 175, 185, 0.25),
+    0 10px 24px -12px rgba(2, 175, 185, 0.42),
+    0 0 22px -10px rgba(2, 175, 185, 0.24);
 }
 
 /* Eyebrow pill turns into a teal glass chip */
@@ -681,9 +688,9 @@ html {
 
 /* Prompt bar: glass with a luminous focus ring */
 [data-theme="dark"] .ff-landing .ff-prompt {
-  background: rgba(10, 15, 22, 0.85);
+  background: rgba(24, 36, 41, 0.94);
   backdrop-filter: blur(12px);
-  box-shadow: 0 0 0 1px rgba(140, 200, 210, 0.07), 0 24px 64px -24px rgba(0, 0, 0, 0.8);
+  box-shadow: 0 0 0 1px rgba(177, 205, 206, 0.1), 0 20px 48px -24px rgba(0, 0, 0, 0.6);
 }
 [data-theme="dark"] .ff-landing .ff-prompt:focus-within {
   border-color: rgba(2, 175, 185, 0.55);
@@ -692,8 +699,8 @@ html {
 
 /* Product window picks up a teal halo */
 [data-theme="dark"] .ff-landing .ff-window {
-  border-color: rgba(2, 175, 185, 0.2);
-  box-shadow: var(--ff-soft-shadow-lg), 0 0 90px -40px rgba(2, 175, 185, 0.55);
+  border-color: rgba(177, 205, 206, 0.2);
+  box-shadow: var(--ff-soft-shadow-lg), 0 0 72px -48px rgba(2, 175, 185, 0.35);
 }
 
 /* Compile badge: teal glass instead of studio yellow */
@@ -718,14 +725,14 @@ html {
 /* CTA panel: layered teal light on deep glass */
 [data-theme="dark"] .ff-landing .ff-cta-panel {
   background:
-    radial-gradient(ellipse 55% 70% at 85% 15%, rgba(2, 175, 185, 0.14), transparent 70%),
-    radial-gradient(ellipse 45% 60% at 8% 90%, rgba(3, 129, 168, 0.12), transparent 70%),
-    linear-gradient(165deg, #0a0f16 0%, #0c1420 100%);
-  border-color: rgba(2, 175, 185, 0.28);
+    radial-gradient(ellipse 55% 70% at 85% 15%, rgba(2, 175, 185, 0.1), transparent 70%),
+    radial-gradient(ellipse 45% 60% at 8% 90%, rgba(3, 129, 168, 0.08), transparent 70%),
+    linear-gradient(165deg, #182429 0%, #1b2b30 100%);
+  border-color: rgba(177, 205, 206, 0.2);
   box-shadow:
-    0 0 0 1px rgba(2, 175, 185, 0.08),
-    0 32px 80px -28px rgba(0, 0, 0, 0.85),
-    0 0 80px -36px rgba(2, 175, 185, 0.45);
+    0 0 0 1px rgba(177, 205, 206, 0.06),
+    0 28px 64px -30px rgba(0, 0, 0, 0.65),
+    0 0 64px -44px rgba(2, 175, 185, 0.3);
 }
 
 /* Dark-only ambient orbs (invisible on the cream light theme) */
