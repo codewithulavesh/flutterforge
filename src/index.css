@@ -603,6 +603,67 @@ html {
   animation: ff-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* Interaction feedback: forging cursor, button spinner, live dot, viewport swap */
+.ff-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 12px;
+  vertical-align: -1px;
+  background: var(--ff-code-ok);
+  animation: ff-blink 1s steps(2, start) infinite;
+}
+@keyframes ff-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.ff-spinner {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  border: 1.5px solid rgb(255 255 255 / 0.35);
+  border-top-color: currentColor;
+  animation: ff-spin 0.7s linear infinite;
+}
+@keyframes ff-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ff-live-dot {
+  animation: ff-live 2s ease-in-out infinite;
+}
+@keyframes ff-live {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.ff-swap {
+  animation: ff-swap-in 0.28s ease-out both;
+}
+@keyframes ff-swap-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* Scroll reveal (driven by IntersectionObserver) */
 .ff-reveal {
   opacity: 0;
@@ -615,6 +676,106 @@ html {
 .ff-reveal.is-visible {
   opacity: 1;
   transform: none;
+}
+
+/* Hero headline: each line rises out of a printed mask. */
+.ff-line-clip {
+  display: block;
+  overflow: hidden;
+  padding-bottom: 0.1em;
+  margin-bottom: -0.1em;
+}
+.ff-line {
+  display: block;
+  transform: translateY(110%);
+  animation: ff-line-up 0.95s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes ff-line-up {
+  to {
+    transform: none;
+  }
+}
+
+/* Hero plate lands like a printed sheet on the desk. */
+@keyframes ff-settle {
+  from {
+    opacity: 0;
+    transform: translateY(16px) rotate(-0.4deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ff-settle {
+  animation: ff-settle 0.95s cubic-bezier(0.16, 1, 0.3, 1) 120ms both;
+}
+
+/* Hairlines draw themselves when their Reveal enters view. */
+.ff-reveal .ff-rule-draw {
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.12s;
+}
+.ff-reveal.is-visible .ff-rule-draw {
+  transform: scaleX(1);
+}
+
+/* Build-log lines type in as a stage advances. */
+.ff-log-line {
+  animation: ff-log-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes ff-log-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Process tape: a slow press-run between chapters. */
+.ff-tape {
+  mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+}
+.ff-tape-track {
+  animation: ff-tape-run 88s linear infinite;
+}
+.ff-tape:hover .ff-tape-track {
+  animation-play-state: paused;
+}
+@keyframes ff-tape-run {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* FAQ answers unfold instead of snapping open. */
+.ff-faq-answer {
+  animation: ff-unfold 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes ff-unfold {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* CTA field: the dot grid drifts like the sheet is being fed through. */
+.ff-cta-grid {
+  animation: ff-grid-drift 26s linear infinite;
+}
+@keyframes ff-grid-drift {
+  to {
+    background-position: 26px 26px;
+  }
 }
 
 /* Gentle float for badges */
@@ -633,13 +794,34 @@ html {
 
 @media (prefers-reduced-motion: reduce) {
   .ff-enter,
-  .ff-float {
+  .ff-float,
+  .ff-settle,
+  .ff-cursor,
+  .ff-spinner,
+  .ff-live-dot,
+  .ff-swap,
+  .ff-log-line,
+  .ff-faq-answer,
+  .ff-cta-grid,
+  .ff-tape-track {
     animation: none;
+  }
+  .ff-line {
+    animation: none;
+    transform: none;
   }
   .ff-reveal {
     opacity: 1;
     transform: none;
     transition: none;
+  }
+  .ff-reveal .ff-rule-draw {
+    transform: none;
+    transition: none;
+  }
+  .ff-tape {
+    mask-image: none;
+    -webkit-mask-image: none;
   }
 }
 
@@ -890,6 +1072,233 @@ html {
 @media (prefers-reduced-motion: reduce) {
   .ff-trace-card { transition: none; }
   .ff-trace-card:hover { transform: none; }
+}
+
+/* ── Editorial landing shell ──────────────────────────────────────────────────
+   A printed-studio system: warm paper, ink rules, one functional teal, a serif
+   accent for voice, and mono annotations. No gradient ink, no floating orbs. */
+.ff-landing.ff-studio {
+  --ff-bg: #f7f2e4;
+  --ff-surface: #fffdf6;
+  --ff-surface-2: #efe8d6;
+  --ff-border: #e0d6bf;
+  --ff-border-hover: #0b3542;
+  --ff-text: #10241f;
+  --ff-text-muted: #4a625f;
+  --ff-text-dim: #617873;
+  --ff-primary: #08666d;
+  --ff-primary-hover: #0a7c84;
+  --ff-primary-dim: #dcebe4;
+  --ff-rule: rgba(16, 36, 31, 0.16);
+  --ff-rule-strong: rgba(16, 36, 31, 0.34);
+  --ff-accent-ink: #08666d;
+  --ff-code-bg: #0f1a1c;
+  --ff-code-surface: #152427;
+  --ff-code-text: #d9e4df;
+  --ff-code-dim: #78908d;
+  --ff-code-key: #7ad3d1;
+  --ff-code-string: #dcc384;
+  --ff-code-error: #f08a80;
+  --ff-code-ok: #8ad9b8;
+  --ff-panel-bg: #0b3542;
+  --ff-panel-text: #fbfadd;
+  --ff-panel-muted: #a5c0c4;
+  --ff-serif: 'Instrument Serif', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+}
+
+[data-theme="dark"] .ff-landing.ff-studio {
+  --ff-bg: #10191d;
+  --ff-surface: #162227;
+  --ff-surface-2: #1d2d33;
+  --ff-border: rgba(177, 205, 206, 0.18);
+  --ff-border-hover: rgba(38, 186, 193, 0.58);
+  --ff-text: #f2f6f3;
+  --ff-text-muted: #b7c6c7;
+  --ff-text-dim: #91a6a8;
+  --ff-primary: #2bc5ce;
+  --ff-primary-hover: #5fd6d6;
+  --ff-primary-dim: rgba(2, 175, 185, 0.14);
+  --ff-rule: rgba(242, 246, 243, 0.14);
+  --ff-rule-strong: rgba(242, 246, 243, 0.3);
+  --ff-accent-ink: #5fd6d6;
+  --ff-code-bg: #0b1416;
+  --ff-code-surface: #101d20;
+  --ff-code-text: #d9e4df;
+  --ff-code-dim: #78908d;
+  --ff-code-key: #7ad3d1;
+  --ff-code-string: #dcc384;
+  --ff-code-error: #f08a80;
+  --ff-code-ok: #8ad9b8;
+  --ff-panel-bg: #0a2c36;
+  --ff-panel-text: #f4f7f2;
+  --ff-panel-muted: #9db9c0;
+}
+
+.ff-serif {
+  font-family: var(--ff-serif);
+  font-weight: 400;
+  letter-spacing: -0.018em;
+}
+
+.ff-kicker {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  font-size: 9px;
+  line-height: 1.5;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ff-text-dim);
+}
+
+.ff-rule {
+  border-color: var(--ff-rule);
+}
+
+/* Drafting sheet: a quiet dot field, not a gradient wash. */
+.ff-draft-grid {
+  isolation: isolate;
+}
+/* Dots sit behind the artwork so the fade never washes out the content. */
+.ff-draft-grid::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: radial-gradient(circle, var(--ff-rule) 1px, transparent 1.2px);
+  background-size: 24px 24px;
+  mask-image: linear-gradient(to bottom, black 0%, rgba(0, 0, 0, 0.55) 55%, transparent 92%);
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, rgba(0, 0, 0, 0.55) 55%, transparent 92%);
+  pointer-events: none;
+}
+
+/* Primary action: ink on paper, teal only as feedback. */
+.ff-ink-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border: 1px solid var(--ff-text);
+  border-radius: 6px;
+  background: var(--ff-text);
+  color: var(--ff-bg);
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ff-ink-button:hover {
+  background: var(--ff-accent-ink);
+  border-color: var(--ff-accent-ink);
+  color: #ffffff;
+}
+.ff-ink-button:active {
+  transform: translateY(1px);
+}
+[data-theme="dark"] .ff-landing .ff-ink-button:hover {
+  color: #062022;
+}
+
+/* Secondary action: a ruled outline that picks up the accent on hover. */
+.ff-outline-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border: 1px solid var(--ff-rule-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ff-text);
+  font-weight: 600;
+  transition:
+    border-color 0.18s ease,
+    color 0.18s ease,
+    background-color 0.18s ease;
+}
+.ff-outline-button:hover {
+  border-color: var(--ff-accent-ink);
+  color: var(--ff-accent-ink);
+  background: color-mix(in srgb, var(--ff-accent-ink) 6%, transparent);
+}
+
+/* Framed artifact: thin plate border and a small corner index. */
+.ff-plate {
+  position: relative;
+  border: 1px solid var(--ff-border);
+  border-radius: 10px;
+  background: var(--ff-surface);
+  box-shadow: 0 1px 2px rgba(16, 36, 31, 0.04), 0 24px 48px -40px rgba(16, 36, 31, 0.35);
+}
+[data-theme="dark"] .ff-landing .ff-plate {
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03), 0 28px 64px -40px rgba(0, 0, 0, 0.8);
+}
+
+.ff-code-surface {
+  background: var(--ff-code-bg);
+  color: var(--ff-code-text);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+}
+
+.ff-code-key { color: var(--ff-code-key); }
+.ff-code-string { color: var(--ff-code-string); }
+.ff-code-dim { color: var(--ff-code-dim); }
+
+/* Code plates stay dark in light mode, so their grey scale must stay white. */
+.ff-landing .ff-code-surface .text-white { color: #ffffff !important; }
+.ff-landing .ff-code-surface .text-white\/90 { color: rgb(255 255 255 / 0.9) !important; }
+.ff-landing .ff-code-surface .text-white\/85 { color: rgb(255 255 255 / 0.85) !important; }
+.ff-landing .ff-code-surface .text-white\/70 { color: rgb(255 255 255 / 0.7) !important; }
+.ff-landing .ff-code-surface .text-white\/50 { color: rgb(255 255 255 / 0.5) !important; }
+.ff-landing .ff-code-surface .text-white\/45 { color: rgb(255 255 255 / 0.45) !important; }
+.ff-landing .ff-code-surface .text-white\/40 { color: rgb(255 255 255 / 0.4) !important; }
+.ff-landing .ff-code-surface .text-white\/35 { color: rgb(255 255 255 / 0.35) !important; }
+.ff-landing .ff-code-surface .text-white\/30 { color: rgb(255 255 255 / 0.3) !important; }
+
+/* Long-form index rows: rules do the work, no cards. */
+.ff-index-row {
+  border-top: 1px solid var(--ff-rule);
+  transition: background-color 0.2s ease;
+}
+.ff-index-row:last-child {
+  border-bottom: 1px solid var(--ff-rule);
+}
+.ff-index-row:hover {
+  background: color-mix(in srgb, var(--ff-accent-ink) 4%, transparent);
+}
+
+/* Quiet link with a drawn underline. */
+.ff-text-link {
+  position: relative;
+  color: var(--ff-text-muted);
+  transition: color 0.18s ease;
+}
+.ff-text-link::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ff-text-link:hover {
+  color: var(--ff-text);
+}
+.ff-text-link:hover::after {
+  transform: scaleX(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ff-ink-button,
+  .ff-outline-button,
+  .ff-text-link,
+  .ff-text-link::after {
+    transition: none;
+  }
 }
 
 /* ── Dock navbar accents ───────────────────────────────────────────────────── */

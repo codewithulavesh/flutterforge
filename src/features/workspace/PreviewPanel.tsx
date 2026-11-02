@@ -351,52 +351,35 @@ export function PreviewPanel() {
 
   return (
     <div className={cn('flex flex-col bg-[var(--ff-bg)]', fullscreen ? 'fixed inset-0 z-50' : 'h-full')}>
-      <div className="flex items-center justify-between gap-2 border-b border-[var(--ff-border)] bg-[var(--ff-surface)] px-2 py-1.5 shrink-0">
-        <div className="flex min-w-0 items-center gap-2">
+      {/* ── Unified toolbar: status, devices, tools and compile ─── */}
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--ff-border)] bg-[var(--ff-surface)] px-2 py-1.5 shrink-0 sm:gap-2">
+        <div className="flex shrink-0 items-center gap-1.5">
           <div className="rounded-md border border-[var(--ff-border)] bg-[var(--ff-bg)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--ff-text-dim)]">
             Preview
           </div>
-          <div className="flex items-center gap-2 text-[10px] text-[var(--ff-text-muted)]">
-            <span className={cn(
-              'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-medium',
-              isRunning ? 'bg-emerald-500/10 text-emerald-400' : isBuilding ? 'bg-indigo-500/10 text-indigo-400' : status === 'failed' ? 'bg-red-500/10 text-red-400' : 'bg-[var(--ff-surface-2)] text-[var(--ff-text-dim)]'
-            )}>
-              <span className={cn('h-1.5 w-1.5 rounded-full', isRunning ? 'bg-emerald-400 animate-pulse' : isBuilding ? 'bg-indigo-400 animate-pulse' : status === 'failed' ? 'bg-red-400' : 'bg-[var(--ff-text-dim)]')} />
-              {isRunning ? 'Live' : isBuilding ? 'Building' : status === 'failed' ? 'Failed' : 'Ready'}
-            </span>
-          </div>
+          <span className={cn(
+            'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium',
+            isRunning ? 'bg-emerald-500/10 text-emerald-400' : isBuilding ? 'bg-indigo-500/10 text-indigo-400' : status === 'failed' ? 'bg-red-500/10 text-red-400' : 'bg-[var(--ff-surface-2)] text-[var(--ff-text-dim)]'
+          )}>
+            <span className={cn('h-1.5 w-1.5 rounded-full', isRunning ? 'bg-emerald-400 animate-pulse' : isBuilding ? 'bg-indigo-400 animate-pulse' : status === 'failed' ? 'bg-red-400' : 'bg-[var(--ff-text-dim)]')} />
+            {isRunning ? 'Live' : isBuilding ? 'Building' : status === 'failed' ? 'Failed' : 'Ready'}
+          </span>
         </div>
-        {hasProject && (
-          <button
-            onClick={handleCompileWeb}
-            disabled={isBuilding}
-            className={cn(
-              'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-medium transition-all disabled:opacity-50',
-              isRunning
-                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                : isBuilding
-                  ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
-                  : 'bg-[var(--ff-primary)]/12 text-[var(--ff-primary)] border border-[var(--ff-primary)]/20'
-            )}
-          >
-            {isBuilding ? <Loader2 size={11} className="animate-spin" /> : <Hammer size={11} />}
-            {isBuilding ? 'Compiling…' : 'Compile'}
-          </button>
-        )}
-      </div>
 
-      {/* ── Toolbar ─────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-2 sm:px-3 py-2 border-b border-[var(--ff-border)] bg-[var(--ff-surface)] shrink-0">
+        <div className="h-4 w-px shrink-0 bg-[var(--ff-border)]" />
+
         {/* Device tabs */}
-        <div className="flex items-center gap-0.5 overflow-x-auto ff-scrollbar max-w-full">
+        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto ff-scrollbar sm:flex-none">
           {DEVICE_TABS.map(({ label, device: d, icon: Icon }) => {
             const active = previewDevice === d;
             return (
               <button
                 key={d}
                 onClick={() => setPreviewDevice(d)}
+                title={label}
+                aria-label={`${label} preview`}
                 className={cn(
-                  'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all',
+                  'flex shrink-0 items-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-medium transition-all',
                   active
                     ? 'bg-[var(--ff-primary)]/15 text-[var(--ff-primary)] border border-[var(--ff-primary)]/30'
                     : 'text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)]'
@@ -409,31 +392,37 @@ export function PreviewPanel() {
           })}
         </div>
 
-        {/* Zoom controls */}
-        <div className="hidden md:flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--ff-bg)] border border-[var(--ff-border)]">
-          <button
-            onClick={() => setZoom((z) => Math.max(25, z - 25))}
-            className="text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] transition-colors p-0.5"
-            title="Zoom Out"
-          >
-            <ZoomOut size={12} />
-          </button>
-          <span className="text-[10px] font-mono text-[var(--ff-text-muted)] w-8 text-center select-none">{zoom}%</span>
-          <button
-            onClick={() => setZoom((z) => Math.min(200, z + 25))}
-            className="text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] transition-colors p-0.5"
-            title="Zoom In"
-          >
-            <ZoomIn size={12} />
-          </button>
-        </div>
-
         {/* Right controls */}
-        <div className="flex items-center gap-1">
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {hasProject && (
+            <span className="hidden xl:inline text-[10px] tabular-nums text-[var(--ff-text-dim)]">
+              {dartFiles.length} Dart files
+            </span>
+          )}
+          <div className="hidden md:flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--ff-bg)] border border-[var(--ff-border)]">
+            <button
+              onClick={() => setZoom((z) => Math.max(25, z - 25))}
+              className="text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] transition-colors p-0.5"
+              title="Zoom Out"
+              aria-label="Zoom out"
+            >
+              <ZoomOut size={12} />
+            </button>
+            <span className="text-[10px] font-mono text-[var(--ff-text-muted)] w-8 text-center select-none">{zoom}%</span>
+            <button
+              onClick={() => setZoom((z) => Math.min(200, z + 25))}
+              className="text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] transition-colors p-0.5"
+              title="Zoom In"
+              aria-label="Zoom in"
+            >
+              <ZoomIn size={12} />
+            </button>
+          </div>
           <button
             onClick={() => setPreviewOrientation(isPortrait ? 'landscape' : 'portrait')}
             className="p-1.5 rounded-md text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)] transition-all"
             title="Rotate Orientation"
+            aria-label="Rotate orientation"
           >
             <RotateCw size={13} />
           </button>
@@ -441,6 +430,7 @@ export function PreviewPanel() {
             onClick={handleRefresh}
             className="p-1.5 rounded-md text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)] transition-all"
             title="Reload Preview"
+            aria-label="Reload preview"
           >
             <RefreshCw size={13} />
           </button>
@@ -451,6 +441,7 @@ export function PreviewPanel() {
               rel="noreferrer"
               className="p-1.5 rounded-md text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)] transition-all"
               title="Open in new tab"
+              aria-label="Open preview in new tab"
             >
               <ExternalLink size={13} />
             </a>
@@ -459,9 +450,28 @@ export function PreviewPanel() {
             onClick={() => setFullscreen(!fullscreen)}
             className="p-1.5 rounded-md text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)] transition-all"
             title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
           >
             <Maximize2 size={13} />
           </button>
+          {hasProject && (
+            <button
+              onClick={handleCompileWeb}
+              disabled={isBuilding}
+              title={isBuilding ? 'Compiling Flutter Web' : 'Compile Flutter Web'}
+              className={cn(
+                'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-medium transition-all disabled:opacity-50',
+                isRunning
+                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                  : isBuilding
+                    ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+                    : 'bg-[var(--ff-primary)]/12 text-[var(--ff-primary)] border border-[var(--ff-primary)]/20'
+              )}
+            >
+              {isBuilding ? <Loader2 size={11} className="animate-spin" /> : <Hammer size={11} />}
+              <span className="hidden sm:inline">{isBuilding ? 'Compiling…' : 'Compile'}</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -506,40 +516,6 @@ export function PreviewPanel() {
         </div>
       </div>
 
-      {/* ── Status bar ──────────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-t border-[var(--ff-border)] bg-[var(--ff-surface)] shrink-0 text-[10px] text-[var(--ff-text-dim)]">
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="truncate">{device.name}</span>
-          <span className="opacity-40 shrink-0">·</span>
-          <span className="shrink-0">{rawW}×{rawH}</span>
-          {hasProject && (
-            <>
-              <span className="opacity-40 shrink-0">·</span>
-              <span className="text-emerald-400 truncate hidden xs:inline">{dartFiles.length} Dart files</span>
-            </>
-          )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0 min-w-0">
-          <span className={cn(
-            'flex items-center gap-1.5 font-medium',
-            isRunning ? 'text-emerald-400' : isBuilding ? 'text-indigo-400' : status === 'failed' ? 'text-red-400' : 'text-slate-400'
-          )}>
-            <span className={cn(
-              'w-1.5 h-1.5 rounded-full',
-              isRunning ? 'bg-emerald-400 animate-pulse' : isBuilding ? 'bg-indigo-400 animate-pulse' : status === 'failed' ? 'bg-red-400' : 'bg-slate-500'
-            )} />
-            <span>
-              {isRunning
-                ? 'Flutter Web Live (Real Build)'
-                : isBuilding
-                  ? 'Compiling Flutter Web…'
-                  : status === 'failed'
-                    ? 'Build Failed'
-                    : 'Ready to Compile'}
-            </span>
-          </span>
-        </div>
-      </div>
     </div>
   );
 }
