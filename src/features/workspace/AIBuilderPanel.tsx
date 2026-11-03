@@ -130,7 +130,7 @@ function ChangedFiles({ files, onOpen }: { files: FileChange[]; onOpen: (path: s
     <Sources>
       <SourcesTrigger count={unique.length}>
         <InlineCitation>
-          <InlineCitationText>Used {unique.length} project sources</InlineCitationText>
+          <InlineCitationText>Used {unique.length} project {unique.length === 1 ? 'source' : 'sources'}</InlineCitationText>
         </InlineCitation>
         <ChevronDown className="size-4" />
       </SourcesTrigger>
@@ -188,16 +188,16 @@ function MessageBubble({
     <Message className={cn(page ? 'max-w-full' : 'max-w-[94%]')} from={message.role}>
       {!isUser && (
         <div className="flex items-center gap-2 px-0.5 text-[11px]">
-          <span className="grid size-6 place-items-center rounded-lg border border-[var(--ff-border)] bg-[var(--ff-surface-2)]">
-            <MessageSquare className="size-3.5 text-[var(--ff-primary)]" />
+          <span className="grid size-6 place-items-center rounded-full border border-[var(--fb-line)] bg-[var(--fb-card)]">
+            <MessageSquare className="size-3 text-[var(--fb-ink)]" />
           </span>
-          <span className="font-semibold text-foreground">FlutterForge</span>
-          <span className="text-muted-foreground">{timeLabel(message.created_at)}</span>
+          <span className="font-semibold text-[var(--fb-ink)]">FlutterForge</span>
+          <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--fb-dim)]">{timeLabel(message.created_at)}</span>
         </div>
       )}
       <MessageContent className={cn(
         page && !isUser && 'w-full',
-        isUser && 'rounded-2xl border border-[var(--ff-border)] bg-[var(--ff-surface-2)] px-4 py-3 shadow-sm',
+        isUser && 'rounded-[18px] border border-[var(--fb-line)] bg-[var(--fb-card)] px-4 py-3',
       )}>
         {isUser ? (
           <div className="whitespace-pre-wrap break-words">{message.content}</div>
@@ -628,19 +628,28 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
   const projectFiles = files.filter((file) => !file.is_directory);
 
   const panelHeader = (
-    <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--ff-border)] bg-[var(--ff-bg)] px-3 py-2.5 sm:px-4">
+    <header className={cn(
+      'flex shrink-0 items-center justify-between gap-3 border-b border-[var(--fb-line)] px-3 py-2.5 sm:px-4',
+      page ? 'bg-[var(--fb-bg)]/90 backdrop-blur-xl' : 'bg-[var(--fb-card)]',
+    )}>
       <div className="flex min-w-0 items-center gap-2.5">
-        <span className="grid size-8 shrink-0 place-items-center rounded-xl border border-[var(--ff-border)] bg-[var(--ff-surface-2)] text-[var(--ff-primary)] shadow-sm">
+        <span className="grid size-8 shrink-0 place-items-center rounded-[10px] border border-[var(--fb-line)] bg-[var(--fb-card)] text-[var(--fb-ink)]">
           <MessageSquare className="size-4" />
         </span>
         <div className="min-w-0">
-          <div className="truncate text-xs font-semibold tracking-tight text-foreground">
-            {currentProject?.name || 'FlutterForge'}
+          <div className="ffb-display truncate text-[13.5px] tracking-[-0.02em] text-[var(--fb-ink)]">
+            {page ? 'AI builder' : currentProject?.name || 'FlutterForge'}
           </div>
-          <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+          <div className="mt-1 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--fb-muted)]">
             <span className={cn(
-              'size-1.5 rounded-full',
-              busy ? 'animate-pulse bg-amber-400' : isEngineConnected ? 'bg-emerald-500' : isEngineConnected === false ? 'bg-muted-foreground/50' : 'animate-pulse bg-amber-400',
+              'h-1.5 w-1.5 rounded-full',
+              busy
+                ? 'animate-pulse bg-[var(--fb-orange)]'
+                : isEngineConnected
+                  ? 'bg-[var(--fb-lime)]'
+                  : isEngineConnected === false
+                    ? 'bg-[var(--fb-dim)]'
+                    : 'animate-pulse bg-[var(--fb-dim)]',
             )} />
             <span className="truncate">
               {busy ? `Working · ${elapsed}s` : isEngineConnected ? 'Local engine ready' : isEngineConnected === false ? 'Fallback mode' : 'Connecting to engine'}
@@ -652,7 +661,7 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
         <label className="sr-only" htmlFor="ff-model-preference">Generation model</label>
         <select
           aria-label="Generation model"
-          className="h-7 max-w-[88px] rounded-lg border border-[var(--ff-border)] bg-[var(--ff-surface)] px-2 text-[10px] font-medium text-foreground outline-none transition-colors hover:border-[var(--ff-border-hover)] focus-visible:ring-2 focus-visible:ring-[var(--ff-primary)]/30 sm:max-w-[104px]"
+          className="h-8 max-w-[88px] rounded-full border border-[var(--fb-line)] bg-transparent px-2.5 font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--fb-muted)] outline-none transition-colors hover:border-[var(--fb-ink)] hover:text-[var(--fb-ink)] focus-visible:border-[var(--fb-ink)] sm:max-w-[104px]"
           id="ff-model-preference"
           onChange={(event) => setModelPreference(event.target.value === 'quality' ? 'quality' : 'fast')}
           title="Choose a faster response or a more capable model"
@@ -663,7 +672,7 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
         </select>
         <button
           aria-label="New chat"
-          className="grid size-7 place-items-center rounded-lg border border-transparent text-muted-foreground transition-colors hover:border-[var(--ff-border)] hover:bg-[var(--ff-surface-2)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ff-primary)]/40"
+          className="grid size-8 place-items-center rounded-full border border-[var(--fb-line)] text-[var(--fb-muted)] transition-colors hover:border-[var(--fb-ink)] hover:text-[var(--fb-ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fb-ink)]/20"
           onClick={handleNewChat}
           title="Start a new chat"
           type="button"
@@ -678,7 +687,7 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
     <div className="w-full" ref={composerRef}>
       <PromptInput
         className={cn(
-          '[&_[data-slot=input-group]]:border-[var(--ff-border)] [&_[data-slot=input-group]]:bg-[var(--ff-surface)] [&_[data-slot=input-group]]:shadow-sm [&_[data-slot=input-group]]:focus-within:border-[var(--ff-primary)] [&_[data-slot=input-group]]:focus-within:ring-2 [&_[data-slot=input-group]]:focus-within:ring-[var(--ff-primary)]/20',
+          '[&_[data-slot=input-group]]:rounded-[20px] [&_[data-slot=input-group]]:border-[var(--fb-line)] [&_[data-slot=input-group]]:bg-[var(--fb-card)] [&_[data-slot=input-group]]:shadow-[0_18px_44px_-38px_rgba(0,0,0,0.55)] [&_[data-slot=input-group]]:transition-colors [&_[data-slot=input-group]]:focus-within:border-[var(--fb-ink)] [&_[data-slot=input-group]]:focus-within:ring-2 [&_[data-slot=input-group]]:focus-within:ring-[var(--fb-ink)]/10',
           page && 'text-[15px]',
         )}
         onSubmit={({ text }) => {
@@ -760,23 +769,23 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
           </div>
         </PromptInputFooter>
       </PromptInput>
-      <div className="mt-1.5 flex items-center justify-between gap-2 px-0.5">
-        <span className="hidden text-[9px] text-muted-foreground sm:block">
-          {busy ? 'Stop cancels the run — files are kept' : '⌘↵ to send · project context included'}
+      <div className="mt-2 flex items-center justify-between gap-2 px-1">
+        <span className="hidden whitespace-nowrap font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--fb-dim)] sm:block">
+          {busy ? 'Stop keeps your files' : '⌘↵ send · context included'}
         </span>
         <div className="ml-auto flex items-center gap-2.5">
           <div
             className="flex items-center gap-1.5"
             title={`Estimated context: ~${contextInfo.tokenEstimate.toLocaleString()} of ${tokenBudget.toLocaleString()} tokens`}
           >
-            <span className="font-mono text-[8px] uppercase tracking-wide text-muted-foreground">ctx</span>
-            <div className="h-1 w-12 overflow-hidden rounded-full bg-secondary">
+            <span className="font-mono text-[8px] uppercase tracking-[0.12em] text-[var(--fb-dim)]">ctx</span>
+            <div className="h-1 w-12 overflow-hidden rounded-full bg-[var(--fb-soft)]">
               <div
-                className={cn('h-full rounded-full transition-all', tokenPct >= 90 ? 'bg-red-400' : tokenPct >= 70 ? 'bg-amber-400' : 'bg-primary')}
+                className={cn('h-full rounded-full transition-all', tokenPct >= 90 ? 'bg-red-400' : tokenPct >= 70 ? 'bg-amber-400' : 'bg-[var(--fb-ink)]')}
                 style={{ width: `${tokenPct}%` }}
               />
             </div>
-            <span className="font-mono text-[9px] tabular-nums text-muted-foreground">{tokenLabel}/{Math.round(tokenBudget / 1000)}k</span>
+            <span className="font-mono text-[9px] tabular-nums text-[var(--fb-dim)]">{tokenLabel}/{Math.round(tokenBudget / 1000)}k</span>
           </div>
         </div>
       </div>
@@ -784,7 +793,7 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
   );
 
   const body = (
-    <Conversation className="flex-1">
+    <Conversation className="flex-1 min-h-0">
       <ConversationContent
         className={cn(
           'mx-auto w-full',
@@ -792,24 +801,29 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
         )}
       >
         {!hasMessages && !busy && (
-          <ConversationEmptyState className={cn(page ? 'min-h-[48vh]' : 'min-h-[320px]')}>
-            <div className="flex w-full max-w-xl flex-col items-center">
-              <div className={cn('mb-4 grid place-items-center rounded-2xl border border-[var(--ff-border)] bg-[var(--ff-surface)] shadow-sm', page ? 'size-14' : 'size-11')}>
-                <BrandLogo size={page ? 34 : 28} />
+          <ConversationEmptyState className={cn('max-[359px]:p-4', page ? 'min-h-[48vh]' : 'min-h-[320px]')}>
+            <div className="flex w-full max-w-xl flex-col items-center text-center">
+              <div className={cn('mb-4 grid place-items-center rounded-[18px] border border-[var(--fb-line)] bg-[var(--fb-card)]', page ? 'size-14' : 'size-11')}>
+                <BrandLogo size={page ? 32 : 26} />
               </div>
-              <p className="mb-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-[var(--ff-primary)]">
-                FlutterForge coding assistant
-              </p>
-              <h2 className={cn('font-semibold tracking-tight text-foreground', page ? 'text-xl sm:text-2xl' : 'text-base')}>
-                Build with your project context.
+              <span className="inline-flex items-center gap-2 rounded-full border border-[var(--fb-line)] bg-[var(--fb-card)] px-3 py-1 font-mono text-[9px] font-semibold uppercase tracking-[0.15em] text-[var(--fb-muted)]">
+                <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[var(--fb-magenta)]" />
+                FlutterForge · AI builder
+              </span>
+              <h2 className={cn('ffb-display ffb-caps mt-5 text-balance text-[var(--fb-ink)]', page ? 'text-[clamp(34px,4.4vw,56px)] leading-[0.9]' : 'text-[26px] leading-[0.95]', 'max-[359px]:text-[28px]')}>
+                One brief from a running app.
               </h2>
-              <p className={cn('mt-2 text-pretty leading-relaxed text-muted-foreground', page ? 'max-w-xl text-sm' : 'max-w-sm text-[11px]')}>
-                Ask a question, request a code change, or build a Flutter feature. The agent works in your files and can validate the live preview.
+              <p className={cn('mt-3 text-pretty leading-relaxed text-[var(--fb-muted)] max-[359px]:hidden', page ? 'max-w-md text-[13.5px]' : 'max-w-sm text-[11.5px]')}>
+                Ask a question, request a code change, or brief a new Flutter feature. The agent writes real Dart files, repairs compile errors and keeps the preview live.
               </p>
-              <div className="mt-5 flex flex-wrap justify-center gap-2">
+              <div className="mt-6 flex flex-wrap justify-center gap-2 max-[359px]:w-full max-[359px]:flex-nowrap max-[359px]:justify-start max-[359px]:overflow-x-auto max-[359px]:pb-1">
                 {SUGGESTIONS.map((suggestion) => (
                   <Suggestion
                     key={suggestion.label}
+                    className={cn(
+                      'border-[var(--fb-line)] bg-[var(--fb-card)] text-[var(--fb-ink)] hover:border-[var(--fb-ink)] hover:bg-[var(--fb-card)] max-[359px]:shrink-0',
+                      page ? 'h-10 px-4 text-[12px]' : 'h-8 px-3 text-[11px]',
+                    )}
                     onClick={(prompt) => {
                       setInput(prompt);
                       focusComposer();
@@ -820,6 +834,9 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
                   </Suggestion>
                 ))}
               </div>
+              <p className="mt-6 font-mono text-[9px] uppercase tracking-[0.14em] text-[var(--fb-dim)] max-[359px]:mt-4">
+                Dart 3 · Local studio · Real source
+              </p>
             </div>
           </ConversationEmptyState>
         )}
@@ -864,15 +881,15 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
         )}
 
         {generationError && !busy && (
-          <div className="rounded-xl border border-red-500/25 bg-red-500/5 px-3.5 py-3">
+          <div className="rounded-[16px] border border-[var(--fb-danger)] bg-[var(--fb-card)] px-3.5 py-3">
             <div className="flex items-start gap-2">
-              <AlertCircle className="mt-0.5 size-3.5 shrink-0 text-red-400" />
+              <AlertCircle className="mt-0.5 size-3.5 shrink-0 text-[var(--fb-danger)]" />
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium text-red-500">Request failed</p>
-                <p className="mt-0.5 break-words text-[11px] text-red-500/80">{generationError}</p>
+                <p className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--fb-danger)]">Request failed</p>
+                <p className="mt-1 break-words text-[11.5px] leading-relaxed text-[var(--fb-muted)]">{generationError}</p>
                 {lastUserMessage && (
                   <button
-                    className="mt-2 rounded-md bg-red-500/15 px-2.5 py-1 text-[10px] font-medium text-red-500 hover:bg-red-500/25"
+                    className="mt-2 rounded-full border border-[var(--fb-danger)] px-3 py-1 text-[10px] font-semibold text-[var(--fb-danger)] transition-colors hover:bg-[var(--fb-soft)]"
                     onClick={() => void handleSend(lastUserMessage, {
                       isInitialGeneration: userMessageCount <= 1 && classifyChatIntent(lastUserMessage) === 'build',
                     })}
@@ -884,7 +901,7 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
               </div>
               <button
                 aria-label="Dismiss error"
-                className="p-0.5 text-red-400/60 hover:text-red-400"
+                className="p-0.5 text-[var(--fb-dim)] hover:text-[var(--fb-danger)]"
                 onClick={() => setGenerationError(null)}
                 type="button"
               >
@@ -935,10 +952,10 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
 
   if (page) {
     return (
-      <div className="flex h-full flex-col bg-background">
+      <div className="flex h-full flex-col bg-[var(--fb-bg)]">
         {panelHeader}
         {body}
-        <div className="shrink-0 border-t border-[var(--ff-border)] bg-[var(--ff-bg)]/95 px-5 pb-4 pt-3 backdrop-blur sm:px-10">
+        <div className="shrink-0 border-t border-[var(--fb-line)] bg-[var(--fb-bg)]/95 px-5 pb-4 pt-3 backdrop-blur sm:px-10">
           <div className="mx-auto w-full max-w-[860px]">{composer}</div>
         </div>
       </div>
@@ -946,10 +963,10 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
   }
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="flex h-full flex-col bg-[var(--fb-card)]">
       {panelHeader}
       {body}
-      <div className="shrink-0 border-t border-border bg-card/40 px-3 py-2.5">
+      <div className="shrink-0 border-t border-[var(--fb-line)] bg-[var(--fb-card)] px-3 py-2.5">
         <div className="mx-auto w-full max-w-2xl">{composer}</div>
       </div>
     </div>

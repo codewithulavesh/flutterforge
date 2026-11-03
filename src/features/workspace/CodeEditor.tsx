@@ -139,16 +139,16 @@ export function CodeEditor() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[var(--ff-bg)]">
-      <div className="flex items-center justify-between gap-2 border-b border-[var(--ff-border)] bg-[var(--ff-surface)] px-2 py-1.5 shrink-0">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="rounded-md border border-[var(--ff-border)] bg-[var(--ff-bg)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--ff-text-dim)]">
+    <div className="flex flex-col h-full bg-[var(--fb-bg)]">
+      <div className="flex items-center justify-between gap-2 border-b border-[var(--fb-line)] bg-[var(--fb-bg)] px-3 py-2 shrink-0">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="shrink-0 rounded-full border border-[var(--fb-line)] bg-[var(--fb-card)] px-2.5 py-1 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--fb-muted)]">
             Editor
           </div>
           {activeFile && (
             <div className="min-w-0 overflow-hidden">
-              <div className="truncate text-[11px] font-medium text-[var(--ff-text)]">{activeFile}</div>
-              <div className={cn('text-[9px]', activeFile && isDirty(activeFile) ? 'text-amber-400' : 'text-[var(--ff-text-dim)]')}>
+              <div className="truncate text-[11.5px] font-semibold text-[var(--fb-ink)]">{activeFile}</div>
+              <div className={cn('mt-0.5 font-mono text-[9px] uppercase tracking-[0.12em]', activeFile && isDirty(activeFile) ? 'text-[var(--fb-orange)]' : 'text-[var(--fb-dim)]')}>
                 {currentFile ? (isDirty(activeFile) ? 'Unsaved changes' : 'Saved') : 'No file selected'}
               </div>
             </div>
@@ -159,7 +159,7 @@ export function CodeEditor() {
             onClick={handleSave}
             disabled={!isDirty(activeFile)}
             title="Save file (Cmd/Ctrl+S)"
-            className="flex items-center gap-1.5 rounded-lg border border-[var(--ff-border)] bg-[var(--ff-bg)] px-2.5 py-1.5 text-[10px] font-medium text-[var(--ff-text-muted)] transition-colors hover:text-[var(--ff-text)] hover:bg-[var(--ff-surface-2)] disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex shrink-0 items-center gap-1.5 rounded-full border border-[var(--fb-line)] bg-[var(--fb-card)] px-3 py-1.5 text-[10px] font-semibold text-[var(--fb-muted)] transition-colors hover:border-[var(--fb-ink)] hover:text-[var(--fb-ink)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Save size={12} />
             Save
@@ -168,28 +168,28 @@ export function CodeEditor() {
       </div>
 
       {/* Open file tabs */}
-      <div className="flex items-stretch border-b border-[var(--ff-border)] bg-[var(--ff-surface)] shrink-0">
+      <div className="flex items-stretch border-b border-[var(--fb-line)] bg-[var(--fb-bg)] shrink-0">
         <div className="flex items-center flex-1 min-w-0 overflow-x-auto ff-scrollbar">
           {openTabs.length === 0 && (
-            <div className="px-4 py-2 text-xs text-[var(--ff-text-dim)]">No files open</div>
+            <div className="px-4 py-2 font-mono text-[9px] uppercase tracking-[0.14em] text-[var(--fb-dim)]">No files open</div>
           )}
           {openTabs.map((path) => (
             <div
               key={path}
               onClick={() => openFile(path)}
               className={cn(
-                'flex items-center gap-2 px-3 py-2 text-xs cursor-pointer border-r border-[var(--ff-border)] transition-colors group',
+                'flex items-center gap-2 px-3 py-2 text-xs cursor-pointer border-r border-[var(--fb-line)] transition-colors group',
                 activeFile === path
-                  ? 'bg-[var(--ff-bg)] text-[var(--ff-text)]'
-                  : 'text-[var(--ff-text-dim)] hover:text-[var(--ff-text-muted)]'
+                  ? 'bg-[var(--fb-card)] font-semibold text-[var(--fb-ink)] shadow-[inset_0_-2px_0_var(--fb-ink)]'
+                  : 'text-[var(--fb-dim)] hover:bg-[var(--fb-soft)] hover:text-[var(--fb-ink)]'
               )}
             >
               <span className="truncate max-w-[160px]">{path.split('/').pop()}</span>
-              {isDirty(path) && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" title="Unsaved changes" />}
+              {isDirty(path) && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--fb-orange)]" title="Unsaved changes" />}
               <button
                 onClick={(e) => { e.stopPropagation(); handleCloseTab(path); }}
                 aria-label={`Close ${path}`}
-                className="opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-[var(--ff-text)] transition-opacity"
+                className="opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-[var(--fb-ink)] transition-opacity"
               >
                 <X size={12} />
               </button>
@@ -228,12 +228,12 @@ export function CodeEditor() {
             }}
           />
         ) : (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <div className="w-16 h-16 rounded-2xl bg-[var(--ff-surface)] flex items-center justify-center mb-4">
-              <Save size={28} className="text-[var(--ff-text-dim)]" />
+          <div className="flex flex-col items-center justify-center h-full px-6 text-center">
+            <div className="mb-4 flex size-14 items-center justify-center rounded-[18px] border border-[var(--fb-line)] bg-[var(--fb-card)]">
+              <Save size={24} className="text-[var(--fb-ink)]" />
             </div>
-            <p className="text-sm text-[var(--ff-text-muted)]">Open a file to start editing</p>
-            <p className="text-xs text-[var(--ff-text-dim)] mt-1">Select from the file explorer on the left</p>
+            <p className="ffb-display ffb-caps text-[22px] leading-none text-[var(--fb-ink)]">Open a file</p>
+            <p className="mt-2 font-mono text-[9px] uppercase tracking-[0.14em] text-[var(--fb-dim)]">Select one from the explorer</p>
           </div>
         )}
       </div>

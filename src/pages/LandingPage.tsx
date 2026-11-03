@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, type AnchorHTMLAttributes, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Lenis from 'lenis';
-import { ScrollTrigger } from 'gsap/ScrollTrigger';
-import { ArrowRight, ArrowUp, Check, GraduationCap, Moon, Plus, Sun } from 'lucide-react';
+import { ArrowRight, ArrowUp, ArrowUpRight, Check, Github, GraduationCap, Moon, Plus, Sun } from 'lucide-react';
 import { BrandLogo } from '@/components/BrandLogo';
 import CardNav, { type CardNavItem } from '@/components/CardNav';
 import { DesktopArtifact, PreviewArtifact, RepairArtifact, SourceArtifact } from '@/components/landing/WorkbenchPanels';
@@ -40,7 +39,13 @@ function emitScroll(velocity = 0) {
 /** Glide to a selector / element / pixel offset. Falls back to native smooth scroll. */
 function scrollToTarget(target: string | HTMLElement | number, offset = -16) {
   if (lenisInstance) {
-    lenisInstance.scrollTo(target, { offset, duration: 1.25, easing: easeOutExpo });
+    // Short hops settle fast; long jumps never drag past ~1.1s.
+    const distance =
+      typeof target === 'number'
+        ? Math.abs(target - window.scrollY)
+        : Math.abs((typeof target === 'string' ? document.querySelector<HTMLElement>(target) : target)?.getBoundingClientRect().top ?? 0);
+    const duration = Math.min(1.1, 0.55 + distance / 4000);
+    lenisInstance.scrollTo(target, { offset, duration, easing: easeOutExpo });
     return;
   }
   if (typeof target === 'number') {
@@ -63,16 +68,14 @@ function useSmoothScroll() {
     }
 
     const lenis = new Lenis({
-      duration: 1.15,
-      easing: (t: number) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+      lerp: 0.1,
       smoothWheel: true,
-      wheelMultiplier: 0.95,
-      touchMultiplier: 1.3,
+      wheelMultiplier: 1,
+      touchMultiplier: 1.15,
       anchors: false,
     });
     lenisInstance = lenis;
     lenis.on('scroll', (e: { velocity: number }) => {
-      ScrollTrigger.update();
       emitScroll(e.velocity);
     });
 
@@ -97,10 +100,14 @@ function useSmoothScroll() {
     };
     document.addEventListener('click', onClick);
 
-    // Re-measure when content height changes (FAQ <details>, fonts, images).
+    // Re-measure when content height changes; coalesce bursts into one frame.
+    let measure = 0;
     const ro = new ResizeObserver(() => {
-      lenis.resize();
-      ScrollTrigger.refresh();
+      if (measure) return;
+      measure = requestAnimationFrame(() => {
+        measure = 0;
+        lenis.resize();
+      });
     });
     ro.observe(document.body);
     emitScroll();
@@ -108,6 +115,7 @@ function useSmoothScroll() {
     return () => {
       document.removeEventListener('click', onClick);
       ro.disconnect();
+      if (measure) cancelAnimationFrame(measure);
       cancelAnimationFrame(raf);
       lenis.destroy();
       lenisInstance = null;
@@ -161,12 +169,70 @@ function ScrollProgress() {
 
 function useScrolledPast(px = 760) {
   const [past, setPast] = useState(false);
+  const pastRef = useRef(false);
   useEffect(() => {
-    const update = ({ scroll }: ScrollInfo) => setPast(scroll > px);
+    const update = ({ scroll }: ScrollInfo) => {
+      const next = scroll > px;
+      if (next === pastRef.current) return;
+      pastRef.current = next;
+      setPast(next);
+    };
     update({ scroll: window.scrollY, progress: 0, velocity: 0 });
     return subscribeScroll(update);
   }, [px]);
   return past;
+}
+
+/** Publishes normalized pointer position as --pt-x / --pt-y, eased per frame. */
+function usePointerField<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const fine = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (!fine.matches || reduced.matches) return;
+
+    let frame = 0;
+    let targetX = 0;
+    let targetY = 0;
+    let x = 0;
+    let y = 0;
+
+    const tick = () => {
+      x += (targetX - x) * 0.16;
+      y += (targetY - y) * 0.16;
+      el.style.setProperty('--pt-x', x.toFixed(4));
+      el.style.setProperty('--pt-y', y.toFixed(4));
+      if (Math.abs(targetX - x) > 0.0005 || Math.abs(targetY - y) > 0.0005) {
+        frame = requestAnimationFrame(tick);
+      } else {
+        frame = 0;
+      }
+    };
+    const kick = () => {
+      if (!frame) frame = requestAnimationFrame(tick);
+    };
+    const move = (event: PointerEvent) => {
+      const rect = el.getBoundingClientRect();
+      targetX = (event.clientX - rect.left) / rect.width - 0.5;
+      targetY = (event.clientY - rect.top) / rect.height - 0.5;
+      kick();
+    };
+    const reset = () => {
+      targetX = 0;
+      targetY = 0;
+      kick();
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerleave', reset);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerleave', reset);
+    };
+  }, []);
+  return ref;
 }
 
 /** Fade-up when the element first scrolls into view. */
@@ -363,14 +429,6 @@ const EXAMPLE_PROMPTS = [
   },
 ];
 
-const SECTIONS = [
-  { id: 'workflow', label: 'How it works' },
-  { id: 'product', label: 'Workbench' },
-  { id: 'desktop', label: 'Desktop export' },
-  { id: 'faq', label: 'FAQ' },
-  { id: 'team', label: 'Project team' },
-];
-
 const HERO_TABS = [
   { id: 'preview', label: 'Preview' },
   { id: 'source', label: 'Source' },
@@ -399,13 +457,29 @@ function SectionLabel({
   );
 }
 
-function FooterCol({ title, children }: { title: string; children: ReactNode }) {
+function FooterCol({
+  title,
+  children,
+  className,
+}: {
+  title: string;
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <div>
-      <p className="ff-kicker">{title}</p>
-      <ul className="mt-4 flex flex-col gap-2.5">{children}</ul>
+    <div className={className}>
+      <p className="ff-kicker flex items-center gap-2">
+        <span aria-hidden className="h-[3px] w-[3px] rounded-full bg-[var(--ff-accent-ink)]" />
+        {title}
+      </p>
+      <ul className="mt-3 flex flex-col gap-0.5 sm:mt-4 sm:gap-2.5">{children}</ul>
     </div>
   );
+}
+
+/** Footer rows keep a 44px tap target on phones, then tighten to a text line. */
+function footerLinkClass(extra?: string) {
+  return cn('ff-text-link inline-flex min-h-11 items-center text-left text-[12px] sm:min-h-0', extra);
 }
 
 /** Routes in-app links through the router while keeping hash anchors native. */
@@ -428,6 +502,18 @@ function NavAnchor({ href, children, ...props }: { href?: string } & AnchorHTMLA
    LANDING PAGE
    ════════════════════════════════════════════════════════════════════ */
 
+/** Gridded work surface behind the hero; plates sit on top of it. */
+function MatBackdrop() {
+  return (
+    <div className="ff-mat" aria-hidden>
+      <div className="ff-mat-plane" />
+      <span className="ff-mat-cross bottom-[19%] left-[5%]" />
+      <span className="ff-mat-cross bottom-[36%] right-[7%] hidden sm:block" />
+      <span className="ff-mat-cross bottom-[8%] left-[41%] hidden md:block" />
+    </div>
+  );
+}
+
 export function LandingPage() {
   const navigate = useNavigate();
   const session = useAuthStore((s) => s.session);
@@ -439,6 +525,8 @@ export function LandingPage() {
   const [forging, setForging] = useState(false);
   const [forgeLines, setForgeLines] = useState<HeroLogLine[]>([]);
   const forgeTimers = useRef<number[]>([]);
+  const matRef = usePointerField<HTMLElement>();
+  const plateRef = usePointerField<HTMLElement>();
 
   useSmoothScroll();
   const showTop = useScrolledPast();
@@ -589,7 +677,7 @@ export function LandingPage() {
           <button
             type="button"
             onClick={toggle}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] border border-[var(--ff-rule-strong)] bg-transparent text-[var(--ff-text-muted)] transition-colors hover:border-[var(--ff-accent-ink)] hover:text-[var(--ff-accent-ink)]"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] border border-[var(--ff-rule-strong)] bg-transparent text-[var(--ff-text-muted)] transition-colors hover:border-[var(--ff-accent-ink)] hover:text-[var(--ff-accent-ink)] sm:h-10 sm:w-10"
             aria-label={isDark ? 'Switch to light appearance' : 'Switch to dark appearance'}
           >
             {isDark ? <Sun size={16} /> : <Moon size={16} />}
@@ -599,8 +687,13 @@ export function LandingPage() {
 
       <main>
         {/* ── Hero ─────────────────────────────────────────────────────── */}
-        <section id="hero" className="relative scroll-mt-20 overflow-hidden border-b border-[var(--ff-rule)]">
+        <section
+          id="hero"
+          ref={matRef}
+          className="relative scroll-mt-20 overflow-hidden border-b border-[var(--ff-rule)]"
+        >
           <div className="ff-draft-grid pointer-events-none absolute inset-0 opacity-60" aria-hidden />
+          <MatBackdrop />
 
           <div className="relative mx-auto max-w-[1440px] px-4 pb-14 pt-8 sm:px-6 sm:pt-10 lg:px-10 lg:pb-20 lg:pt-12">
             <div className="grid items-start gap-12 lg:grid-cols-12 lg:gap-12">
@@ -610,7 +703,7 @@ export function LandingPage() {
                   <span className="ff-kicker hidden sm:block">Vol. 01 · 2026</span>
                 </div>
 
-                <h1 className="ff-display mt-8 text-[50px] font-semibold leading-[0.92] tracking-[-0.05em] text-[var(--ff-text)] sm:text-[68px] lg:text-[clamp(56px,5.1vw,82px)]">
+                <h1 className="ff-display mt-8 text-[clamp(40px,12.6vw,50px)] font-semibold leading-[0.92] tracking-[-0.05em] text-[var(--ff-text)] sm:text-[68px] lg:text-[clamp(56px,5.1vw,82px)]">
                   <span className="ff-line-clip">
                     <span className="ff-line">Make the idea.</span>
                   </span>
@@ -659,21 +752,21 @@ export function LandingPage() {
                       {prompt.length} / 2000
                     </span>
                   </div>
-                  <div className="mt-3 flex items-center gap-2 border border-[var(--ff-rule-strong)] bg-[var(--ff-surface)] p-1.5 pl-3 transition-colors focus-within:border-[var(--ff-accent-ink)]">
+                  <div className="mt-3 flex flex-col gap-2 border border-[var(--ff-rule-strong)] bg-[var(--ff-surface)] p-2 transition-colors focus-within:border-[var(--ff-accent-ink)] sm:flex-row sm:items-center sm:p-1.5 sm:pl-3">
                     <input
                       id="hero-prompt"
                       value={prompt}
                       onChange={(event) => setPrompt(event.target.value)}
                       maxLength={2000}
                       placeholder="A habit tracker with weekly goals"
-                      className="min-w-0 flex-1 bg-transparent py-2 text-[13px] text-[var(--ff-text)] outline-none placeholder:text-[var(--ff-text-dim)]"
+                      className="min-w-0 flex-1 bg-transparent px-1 py-2 text-[13px] text-[var(--ff-text)] outline-none placeholder:text-[var(--ff-text-dim)] sm:px-0"
                     />
                     <button
                       type="submit"
                       disabled={!prompt.trim() || forging}
                       aria-busy={forging}
                       className={cn(
-                        'ff-ink-button h-9 shrink-0 px-3.5 text-[11.5px]',
+                        'ff-ink-button h-11 w-full shrink-0 px-3.5 text-[11.5px] sm:h-10 sm:w-auto lg:h-9',
                         forging ? 'cursor-progress' : 'disabled:pointer-events-none disabled:opacity-35',
                       )}
                       aria-label="Generate a project from this brief"
@@ -697,7 +790,7 @@ export function LandingPage() {
                 </form>
 
                 <div className="ff-enter mt-2 flex flex-wrap items-center gap-2" style={{ animationDelay: '250ms' }}>
-                  <span className="ff-kicker mr-1">Try an idea</span>
+                  <span className="ff-kicker basis-full sm:mr-1 sm:basis-auto">Try an idea</span>
                   {EXAMPLE_PROMPTS.map((example) => {
                     const selected = prompt === example.prompt;
                     return (
@@ -733,53 +826,61 @@ export function LandingPage() {
               </div>
 
               {/* Plate 01 — workspace */}
-              <figure className="ff-settle min-w-0 lg:col-span-7">
+              <figure ref={plateRef} className="ff-settle min-w-0 lg:col-span-7">
                 <div className="mb-2 flex items-end justify-between gap-4">
                   <span className="ff-kicker">Plate 01 — the workspace</span>
-                  <span className="ff-kicker">build 042 · local</span>
+                  <span className="ff-kicker hidden sm:block">build 042 · local</span>
                 </div>
 
-                <div className="ff-plate overflow-hidden">
-                  <div className="flex items-center gap-3 border-b border-[var(--ff-rule)] px-3 py-2 sm:px-4">
-                    <div className="hidden items-center gap-1.5 sm:flex" aria-hidden>
-                      <span className="h-1.5 w-1.5 rounded-full bg-[var(--ff-rule-strong)]" />
-                      <span className="h-1.5 w-1.5 rounded-full bg-[var(--ff-rule-strong)]" />
-                      <span className="h-1.5 w-1.5 rounded-full bg-[var(--ff-rule-strong)]" />
-                    </div>
-                    <span className="hidden font-mono text-[9.5px] text-[var(--ff-text-dim)] sm:inline">habit.local</span>
-                    <div className="ml-auto flex items-center" role="tablist" aria-label="Workspace view">
-                      {HERO_TABS.map((tab) => (
-                        <button
-                          key={tab.id}
-                          type="button"
-                          role="tab"
-                          id={`hero-tab-${tab.id}`}
-                          aria-selected={heroTab === tab.id}
-                          aria-controls={`hero-panel-${tab.id}`}
-                          onClick={() => setHeroTab(tab.id)}
-                          className={cn(
-                            'border-b-2 px-2.5 py-1.5 font-mono text-[8.5px] uppercase tracking-[0.12em] transition-colors',
-                            heroTab === tab.id
-                              ? 'border-[var(--ff-accent-ink)] text-[var(--ff-text)]'
-                              : 'border-transparent text-[var(--ff-text-dim)] hover:text-[var(--ff-text)]',
-                          )}
-                        >
-                          {tab.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                <div className="ff-plate-stage">
+                  <div className="ff-plate-tilt">
+                    <div className="ff-plate-stack">
+                      <span className="ff-sheet ff-sheet-1" aria-hidden />
+                      <span className="ff-sheet ff-sheet-2" aria-hidden />
+                      <div className="ff-plate overflow-hidden">
+                        <div className="flex items-center gap-3 border-b border-[var(--ff-rule)] px-3 py-2 sm:px-4">
+                          <div className="hidden items-center gap-1.5 sm:flex" aria-hidden>
+                            <span className="h-1.5 w-1.5 rounded-full bg-[var(--ff-rule-strong)]" />
+                            <span className="h-1.5 w-1.5 rounded-full bg-[var(--ff-rule-strong)]" />
+                            <span className="h-1.5 w-1.5 rounded-full bg-[var(--ff-rule-strong)]" />
+                          </div>
+                          <span className="hidden font-mono text-[9.5px] text-[var(--ff-text-dim)] sm:inline">habit.local</span>
+                          <div className="ml-auto flex items-center" role="tablist" aria-label="Workspace view">
+                            {HERO_TABS.map((tab) => (
+                              <button
+                                key={tab.id}
+                                type="button"
+                                role="tab"
+                                id={`hero-tab-${tab.id}`}
+                                aria-selected={heroTab === tab.id}
+                                aria-controls={`hero-panel-${tab.id}`}
+                                onClick={() => setHeroTab(tab.id)}
+                                className={cn(
+                                  'border-b-2 px-2.5 py-1.5 font-mono text-[8.5px] uppercase tracking-[0.12em] transition-colors',
+                                  heroTab === tab.id
+                                    ? 'border-[var(--ff-accent-ink)] text-[var(--ff-text)]'
+                                    : 'border-transparent text-[var(--ff-text-dim)] hover:text-[var(--ff-text)]',
+                                )}
+                              >
+                                {tab.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
 
-                  <div
-                    key={heroTab}
-                    id={`hero-panel-${heroTab}`}
-                    role="tabpanel"
-                    aria-labelledby={`hero-tab-${heroTab}`}
-                    className="ff-swap min-h-[400px] sm:min-h-[440px]"
-                  >
-                    {heroTab === 'preview' ? <ProductWindow /> : null}
-                    {heroTab === 'source' ? <HeroSource /> : null}
-                    {heroTab === 'build' ? <HeroBuildLog lines={forging ? forgeLines : HERO_LOG} running={forging} /> : null}
+                        <div
+                          key={heroTab}
+                          id={`hero-panel-${heroTab}`}
+                          role="tabpanel"
+                          aria-labelledby={`hero-tab-${heroTab}`}
+                          className="ff-swap min-h-[400px] sm:min-h-[440px]"
+                        >
+                          {heroTab === 'preview' ? <ProductWindow /> : null}
+                          {heroTab === 'source' ? <HeroSource /> : null}
+                          {heroTab === 'build' ? <HeroBuildLog lines={forging ? forgeLines : HERO_LOG} running={forging} /> : null}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -1055,7 +1156,11 @@ export function LandingPage() {
                     <span className="ff-kicker">Plate 02 — the desktop runner</span>
                     <span className="ff-kicker">fig. 2</span>
                   </div>
-                  <DesktopArtifact />
+                  <div className="ff-plate-stack">
+                    <span className="ff-sheet ff-sheet-1" aria-hidden />
+                    <span className="ff-sheet ff-sheet-2" aria-hidden />
+                    <DesktopArtifact />
+                  </div>
                   <figcaption className="mt-3 border-t border-[var(--ff-rule)] pt-2.5 text-[11.5px] leading-relaxed text-[var(--ff-text-muted)]">
                     The same source tree compiles to a web preview and portable desktop runners.
                   </figcaption>
@@ -1170,15 +1275,21 @@ export function LandingPage() {
             <Reveal>
               <div className="relative overflow-hidden bg-[var(--ff-panel-bg)] px-6 py-12 text-[var(--ff-panel-text)] sm:px-10 lg:px-14 lg:py-16">
                 <div
-                  className="ff-cta-grid pointer-events-none absolute inset-0 opacity-60"
+                  className="ff-cta-field pointer-events-none absolute inset-0 opacity-60"
                   aria-hidden
                   style={{
-                    backgroundImage: 'radial-gradient(rgba(251,250,221,0.12) 1px, transparent 1.2px)',
-                    backgroundSize: '26px 26px',
                     maskImage: 'linear-gradient(to bottom right, black, transparent 78%)',
                     WebkitMaskImage: 'linear-gradient(to bottom right, black, transparent 78%)',
                   }}
-                />
+                >
+                  <div
+                    className="ff-cta-grid"
+                    style={{
+                      backgroundImage: 'radial-gradient(rgba(251,250,221,0.12) 1px, transparent 1.2px)',
+                      backgroundSize: '26px 26px',
+                    }}
+                  />
+                </div>
                 <div className="relative grid gap-8 lg:grid-cols-[1.2fr_auto] lg:items-end">
                   <div>
                     <p className="ff-kicker text-[var(--ff-panel-muted)]">Start here</p>
@@ -1217,71 +1328,189 @@ export function LandingPage() {
       </main>
 
       {/* ── Footer ─────────────────────────────────────────────────────── */}
-      <footer>
-        <div className="mx-auto max-w-[1440px] px-4 pb-20 pt-14 sm:px-6 lg:px-10">
-          <div className="grid gap-10 border-b border-[var(--ff-rule)] pb-10 sm:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1fr]">
-            <div>
+      <footer className="relative border-t border-[var(--ff-rule-strong)]">
+        <div className="mx-auto max-w-[1440px] px-4 pb-24 pt-14 sm:px-6 sm:pb-8 sm:pt-16 lg:px-10">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-10 border-b border-[var(--ff-rule)] pb-12 sm:grid-cols-3 xl:grid-cols-[minmax(0,1.7fr)_repeat(5,minmax(0,1fr))] xl:gap-x-6 2xl:gap-x-8">
+            <div className="col-span-2 sm:col-span-3 xl:col-span-1 xl:pr-8">
               <div className="flex items-center gap-2.5">
-                <BrandLogo size={24} />
-                <span className="ff-display text-[16px] font-semibold tracking-tight">FlutterForge</span>
+                <BrandLogo size={26} />
+                <span className="ff-display text-[17px] font-semibold tracking-tight">FlutterForge</span>
               </div>
-              <p className="mt-4 max-w-xs text-[12px] leading-relaxed text-[var(--ff-text-muted)]">
+              <p className="mt-4 max-w-[32ch] text-[12.5px] leading-relaxed text-[var(--ff-text-muted)]">
                 A local-first Flutter studio: brief, build, preview and repair in one workspace.
               </p>
-              <p className="ff-kicker mt-5">Engineered by OnUs Devs</p>
+              <a
+                href="https://github.com/codewithulavesh/flutterforge"
+                target="_blank"
+                rel="noreferrer"
+                className="group mt-6 inline-flex min-h-11 items-center gap-2.5 rounded-[6px] border border-[var(--ff-rule-strong)] px-3.5 text-[11.5px] font-medium text-[var(--ff-text-muted)] transition-colors hover:border-[var(--ff-accent-ink)] hover:text-[var(--ff-text)] sm:min-h-10"
+              >
+                <Github size={14} />
+                Source on GitHub
+                <ArrowUpRight
+                  size={12}
+                  className="transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+                />
+              </a>
+              <p className="ff-kicker mt-6">Engineered by OnUs Devs</p>
+              <p className="mt-1.5 text-[10.5px] leading-relaxed text-[var(--ff-text-dim)]">
+                S. G. Balekundri Institute of Technology, Belagavi · VTU
+              </p>
             </div>
 
-            <FooterCol title="Studio">
-              {SECTIONS.map((section) => (
-                <li key={section.id}>
-                  <button type="button" onClick={() => scrollToSection(section.id)} className="ff-text-link text-[12px]">
-                    {section.label}
+            <FooterCol title="Product">
+              {[
+                { label: 'Overview', id: 'hero' },
+                { label: 'How it works', id: 'workflow' },
+                { label: 'Workbench', id: 'product' },
+                { label: 'Desktop export', id: 'desktop' },
+              ].map((item) => (
+                <li key={item.id}>
+                  <button type="button" onClick={() => scrollToSection(item.id)} className={footerLinkClass()}>
+                    {item.label}
                   </button>
                 </li>
               ))}
             </FooterCol>
 
-            <FooterCol title="Project">
+            <FooterCol title="Get started">
               <li>
-                <Link to={workspaceHref} className="ff-text-link text-[12px]">
-                  {session ? 'Dashboard' : 'Create an account'}
+                <Link to={workspaceHref} className={footerLinkClass()}>
+                  {session ? 'Open dashboard' : 'Start a build'}
                 </Link>
               </li>
+              {!session && (
+                <li>
+                  <Link to="/login" className={footerLinkClass()}>
+                    Sign in
+                  </Link>
+                </li>
+              )}
+              {!session && (
+                <li>
+                  <Link to="/forgot-password" className={footerLinkClass()}>
+                    Forgot password
+                  </Link>
+                </li>
+              )}
               <li>
-                <Link to={session ? '/dashboard' : '/login'} className="ff-text-link text-[12px]">
-                  {authLabel}
-                </Link>
+                <button type="button" onClick={() => scrollToSection('workflow')} className={footerLinkClass()}>
+                  See the build loop
+                </button>
+              </li>
+            </FooterCol>
+
+            <FooterCol title="Use cases">
+              {EXAMPLE_PROMPTS.map((example) => (
+                <li key={example.label}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPrompt(example.prompt);
+                      scrollToSection('hero');
+                      requestAnimationFrame(() =>
+                        document.getElementById('hero-prompt')?.focus({ preventScroll: true }),
+                      );
+                    }}
+                    className={footerLinkClass()}
+                  >
+                    {example.label}
+                  </button>
+                </li>
+              ))}
+            </FooterCol>
+
+            <FooterCol title="Resources">
+              <li>
+                <button type="button" onClick={() => scrollToSection('faq')} className={footerLinkClass()}>
+                  FAQ
+                </button>
               </li>
               <li>
-                <a href="#hero" className="ff-text-link text-[12px]">
-                  Back to overview
+                <button type="button" onClick={() => scrollToSection('team')} className={footerLinkClass()}>
+                  Project team
+                </button>
+              </li>
+              <li>
+                <a
+                  href="https://github.com/codewithulavesh/flutterforge"
+                  target="_blank"
+                  rel="noreferrer"
+                  className={footerLinkClass('group gap-1.5')}
+                >
+                  Repository
+                  <ArrowUpRight
+                    size={11}
+                    className="transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+                  />
                 </a>
+              </li>
+              <li>
+                <button type="button" onClick={() => scrollToTarget(0, 0)} className={footerLinkClass()}>
+                  Back to top
+                </button>
               </li>
             </FooterCol>
 
             <FooterCol title="Legal">
               <li>
-                <Link to="/legal/terms" className="ff-text-link text-[12px]">
+                <Link to="/legal/terms" className={footerLinkClass()}>
                   Terms of use
                 </Link>
               </li>
               <li>
-                <Link to="/legal/privacy" className="ff-text-link text-[12px]">
+                <Link to="/legal/privacy" className={footerLinkClass()}>
                   Privacy notice
                 </Link>
               </li>
               <li>
-                <Link to="/legal/permissions" className="ff-text-link text-[12px]">
+                <Link to="/legal/permissions" className={footerLinkClass()}>
                   Permissions
                 </Link>
               </li>
             </FooterCol>
           </div>
 
-          <div className="flex flex-col gap-2 pt-6 text-[10.5px] text-[var(--ff-text-dim)] sm:flex-row sm:items-center sm:justify-between">
-            <p>© {new Date().getFullYear()} FlutterForge. All rights reserved.</p>
-            <p>S. G. Balekundri Institute of Technology, Belagavi · VTU · Phase 2</p>
+          <div className="flex flex-col gap-5 pt-6 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[10.5px] leading-relaxed text-[var(--ff-text-dim)]">
+              © {new Date().getFullYear()} FlutterForge. All rights reserved.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="ff-kicker mr-1 hidden sm:inline">Settings</span>
+              <button
+                type="button"
+                onClick={toggle}
+                aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+                className="inline-flex h-11 items-center gap-2 rounded-[6px] border border-[var(--ff-rule-strong)] px-3.5 text-[11.5px] text-[var(--ff-text-muted)] transition-colors hover:border-[var(--ff-accent-ink)] hover:text-[var(--ff-text)] sm:h-9"
+              >
+                {isDark ? <Sun size={13} /> : <Moon size={13} />}
+                {isDark ? 'Light mode' : 'Dark mode'}
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollToTarget(0, 0)}
+                className="inline-flex h-11 items-center gap-2 rounded-[6px] border border-[var(--ff-rule-strong)] px-3.5 text-[11.5px] text-[var(--ff-text-muted)] transition-colors hover:border-[var(--ff-accent-ink)] hover:text-[var(--ff-text)] sm:h-9"
+              >
+                Back to top
+                <ArrowUp size={13} />
+              </button>
+              <a
+                href="https://github.com/codewithulavesh/flutterforge"
+                target="_blank"
+                rel="noreferrer"
+                aria-label="FlutterForge on GitHub"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-[6px] border border-[var(--ff-rule-strong)] text-[var(--ff-text-muted)] transition-colors hover:border-[var(--ff-accent-ink)] hover:text-[var(--ff-text)] sm:h-9 sm:w-9"
+              >
+                <Github size={14} />
+              </a>
+            </div>
           </div>
+        </div>
+
+        <div aria-hidden className="pointer-events-none select-none overflow-hidden pb-3 sm:pb-5">
+          <p className="ff-serif mx-auto max-w-[1440px] px-4 pb-[0.18em] pt-[0.1em] text-[clamp(48px,12.4vw,178px)] leading-[1.15] tracking-[-0.035em] text-[var(--ff-text)] opacity-[0.055] sm:px-6 lg:px-10">
+            FlutterForge
+          </p>
         </div>
       </footer>
 
@@ -1290,7 +1519,7 @@ export function LandingPage() {
         aria-label="Back to top"
         onClick={() => scrollToTarget(0, 0)}
         className={cn(
-          'ff-totop fixed bottom-6 right-6 z-40 flex h-10 w-10 items-center justify-center border border-[var(--ff-rule-strong)] bg-[var(--ff-bg)] text-[var(--ff-text-muted)] transition-colors hover:border-[var(--ff-accent-ink)] hover:text-[var(--ff-accent-ink)]',
+          'ff-totop fixed bottom-6 right-6 z-40 flex h-11 w-11 items-center justify-center border border-[var(--ff-rule-strong)] bg-[var(--ff-bg)] text-[var(--ff-text-muted)] transition-colors hover:border-[var(--ff-accent-ink)] hover:text-[var(--ff-accent-ink)] lg:h-10 lg:w-10',
           showTop && 'is-shown',
         )}
       >

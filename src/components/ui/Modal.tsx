@@ -49,7 +49,7 @@ export function Modal({ open, onClose, title, children, className, size = 'md' }
             </h2>
             <button
               onClick={onClose}
-              className="ff-btn-ghost p-1.5 rounded-lg text-[var(--ff-text-muted)] hover:text-[var(--ff-text)] transition-colors shrink-0"
+              className="ff-btn-ghost flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[var(--ff-text-muted)] transition-colors hover:text-[var(--ff-text)]"
               title="Close"
             >
               <X size={18} />

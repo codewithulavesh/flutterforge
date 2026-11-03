@@ -103,9 +103,9 @@ export function WorkspacePage() {
   const showFileExplorer = activeView === 'code' || activeView === 'files';
 
   return (
-    <div className={cn('flex h-dvh overflow-hidden bg-[var(--ff-bg)] ff-studio', isDragging && 'select-none cursor-col-resize')}>
+    <div className={cn('flex h-dvh overflow-hidden bg-[var(--fb-bg)] ff-bold', isDragging && 'select-none cursor-col-resize')}>
       <div className="flex-1 flex flex-col min-w-0 mx-auto w-full max-w-[1800px]">
-        <Suspense fallback={<div className="h-[60px] shrink-0 border-b border-[var(--ff-border)] bg-[var(--ff-surface)]" />}>
+        <Suspense fallback={<div className="h-[60px] shrink-0 border-b border-[var(--fb-line)] bg-[var(--fb-bg)]" />}>
           <WorkspaceToolbar />
         </Suspense>
         <Suspense fallback={null}>
@@ -114,21 +114,21 @@ export function WorkspacePage() {
 
         {/* Keep the work surface usable on phones and tablets. Side panels join
             the canvas only when there is enough horizontal room. */}
-        <div className="flex-1 flex flex-col xl:flex-row min-h-0 bg-[var(--ff-bg)]">
+        <div className="flex-1 flex flex-col xl:flex-row min-h-0 bg-[var(--fb-bg)]">
 
           {/* AI Builder Panel - responsive drawer on mobile */}
           {showAiPanel && (
             <>
               <div
                 style={{ width: aiPanelWidth, minWidth: AI_PANEL_MIN, maxWidth: AI_PANEL_MAX }}
-                className="hidden xl:flex shrink-0 flex-col border-r border-[var(--ff-border)] bg-[var(--ff-surface)] transition-none overflow-hidden h-full"
+                className="hidden xl:flex shrink-0 flex-col border-r border-[var(--fb-line)] bg-[var(--fb-card)] transition-none overflow-hidden h-full"
               >
                 <Suspense fallback={<div className="h-full" />}><AIBuilderPanel /></Suspense>
               </div>
               {/* Drag handle - hidden on mobile */}
               <div
                 onMouseDown={handleMouseDown}
-                className="hidden xl:flex w-1 shrink-0 cursor-col-resize hover:bg-[var(--ff-primary)]/50 active:bg-[var(--ff-primary)] transition-colors group relative"
+                className="hidden xl:flex w-1 shrink-0 cursor-col-resize hover:bg-[var(--fb-ink)]/30 active:bg-[var(--fb-ink)] transition-colors group relative"
                 title="Drag to resize AI panel"
               >
                 <div className="absolute inset-y-0 -left-1 -right-1" />
@@ -139,13 +139,13 @@ export function WorkspacePage() {
           {/* On phones the file list becomes a short top panel; on wide screens
               it sits beside the editor as a conventional explorer sidebar. */}
           {showFileExplorer && (
-            <div className="w-full xl:w-60 shrink-0 border-b xl:border-b-0 xl:border-r border-[var(--ff-border)] h-[min(24vh,220px)] xl:h-auto overflow-hidden">
+            <div className="w-full xl:w-60 shrink-0 border-b xl:border-b-0 xl:border-r border-[var(--fb-line)] h-[min(24vh,220px)] xl:h-auto overflow-hidden">
               <Suspense fallback={<div className="h-full" />}><FileExplorer /></Suspense>
             </div>
           )}
 
           {/* Center: main view — preview is hidden until generation completes */}
-          <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
             <div className="flex-1 min-h-0 overflow-hidden">
               <Suspense fallback={<FullPageSpinner label="Loading workspace view..." />}>
                 {renderMainView(activeView)}

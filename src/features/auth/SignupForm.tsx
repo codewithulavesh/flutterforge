@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock, User, AlertCircle } from 'lucide-react';
+import { Mail, Lock, User, AlertCircle, CheckCircle2, ArrowRight, ArrowUpRight } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth.store';
 import { AuthLayout } from './AuthLayout';
 import { Button } from '@/components/ui/Button';
@@ -42,65 +42,92 @@ export function SignupForm() {
 
   return (
     <AuthLayout>
-      <div className="ff-fade-in">
-        <h1 className="text-2xl font-bold text-[var(--ff-text)] mb-2">Create your account</h1>
-        <p className="text-[var(--ff-text-muted)] mb-8">Start building Flutter apps with AI</p>
-
-        {(error || formError) && (
-          <div className="flex items-center gap-2 px-3 py-2.5 mb-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
-            <AlertCircle size={16} />
-            {formError || error}
-          </div>
-        )}
-        {successMessage && (
-          <div className="flex items-center gap-2 px-3 py-2.5 mb-4 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm">
-            {successMessage}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <Input
-            label="Full Name"
-            type="text"
-            name="fullName"
-            placeholder="Jane Doe"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-            icon={<User size={16} />}
-            autoComplete="name"
-          />
-          <Input
-            label="Email"
-            type="email"
-            name="email"
-            placeholder="you@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            icon={<Mail size={16} />}
-            autoComplete="email"
-          />
-          <Input
-            label="Password"
-            type="password"
-            name="password"
-            placeholder="At least 6 characters"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            icon={<Lock size={16} />}
-            autoComplete="new-password"
-          />
-
-          <Button type="submit" loading={loading} className="w-full" size="lg">
-            Create Account
-          </Button>
-        </form>
-
-        <p className="mt-6 text-center text-sm text-[var(--ff-text-muted)]">
-          Already have an account?{' '}
-          <Link to="/login" className="text-[var(--ff-primary)] hover:underline font-medium">
-            Sign in
+      <div className="ffb-auth-card ff-fade-in">
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--fb-line)] px-5 py-3.5 sm:px-7">
+          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] font-medium uppercase tracking-[0.16em] text-[var(--fb-muted)]">
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[var(--fb-cyan)]" />
+            New account
+          </span>
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1 font-mono text-[9.5px] uppercase tracking-[0.14em] text-[var(--fb-dim)] transition-colors hover:text-[var(--fb-ink)]"
+          >
+            Home
+            <ArrowUpRight size={11} aria-hidden />
           </Link>
-        </p>
+        </div>
+
+        <div className="p-5 sm:p-7">
+          <h1 className="ffb-display ffb-caps text-[clamp(30px,6.4vw,42px)] leading-[0.9] tracking-[-0.035em] text-[var(--fb-ink)]">
+            Create your account
+          </h1>
+          <p className="mt-2.5 text-[13.5px] leading-relaxed text-[var(--fb-muted)]">
+            Start building Flutter apps with AI.
+          </p>
+
+          {(error || formError) && (
+            <div role="alert" className="ffb-auth-alert mt-5">
+              <AlertCircle size={15} className="mt-px shrink-0" aria-hidden />
+              <span>{formError || error}</span>
+            </div>
+          )}
+          {successMessage && (
+            <div role="status" className="ffb-auth-success mt-5">
+              <CheckCircle2 size={15} className="mt-px shrink-0" aria-hidden />
+              <span>{successMessage}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="mt-6 space-y-[18px]">
+            <Input
+              label="Full name"
+              type="text"
+              name="fullName"
+              placeholder="Jane Doe"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              icon={<User size={16} />}
+              autoComplete="name"
+            />
+            <Input
+              label="Email"
+              type="email"
+              name="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              icon={<Mail size={16} />}
+              autoComplete="email"
+            />
+            <Input
+              label="Password"
+              type="password"
+              name="password"
+              placeholder="At least 6 characters"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              icon={<Lock size={16} />}
+              autoComplete="new-password"
+            />
+
+            <Button type="submit" loading={loading} className="h-12 w-full font-semibold">
+              Create account
+            </Button>
+          </form>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 border-t border-[var(--fb-line)] bg-[var(--fb-soft)] px-5 py-3.5 sm:px-7">
+          <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-[var(--fb-muted)]">
+            Already have an account?
+          </span>
+          <Link
+            to="/login"
+            className="group inline-flex min-h-9 items-center gap-1.5 text-[12.5px] font-semibold text-[var(--fb-ink)]"
+          >
+            Sign in
+            <ArrowRight size={13} className="transition-transform group-hover:translate-x-0.5" aria-hidden />
+          </Link>
+        </div>
       </div>
     </AuthLayout>
   );

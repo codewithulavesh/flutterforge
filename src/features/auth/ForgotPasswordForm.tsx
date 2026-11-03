@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, AlertCircle, CheckCircle2, ArrowLeft } from 'lucide-react';
+import { Mail, AlertCircle, CheckCircle2, ArrowRight, ArrowUpRight } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth.store';
 import { AuthLayout } from './AuthLayout';
 import { Button } from '@/components/ui/Button';
@@ -31,53 +31,81 @@ export function ForgotPasswordForm() {
 
   return (
     <AuthLayout>
-      <div className="ff-fade-in">
-        <Link to="/login" className="flex items-center gap-1.5 text-sm text-[var(--ff-text-muted)] hover:text-[var(--ff-text)] mb-6 transition-colors">
-          <ArrowLeft size={16} />
-          Back to sign in
-        </Link>
+      <div className="ffb-auth-card ff-fade-in">
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--fb-line)] px-5 py-3.5 sm:px-7">
+          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] font-medium uppercase tracking-[0.16em] text-[var(--fb-muted)]">
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[var(--fb-magenta)]" />
+            Password reset
+          </span>
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1 font-mono text-[9.5px] uppercase tracking-[0.14em] text-[var(--fb-dim)] transition-colors hover:text-[var(--fb-ink)]"
+          >
+            Home
+            <ArrowUpRight size={11} aria-hidden />
+          </Link>
+        </div>
 
-        <h1 className="text-2xl font-bold text-[var(--ff-text)] mb-2">Reset password</h1>
-        <p className="text-[var(--ff-text-muted)] mb-8">
-          Enter your email and we'll send you a reset link.
-        </p>
+        <div className="p-5 sm:p-7">
+          <h1 className="ffb-display ffb-caps text-[clamp(30px,6.4vw,42px)] leading-[0.9] tracking-[-0.035em] text-[var(--fb-ink)]">
+            Reset password
+          </h1>
+          <p className="mt-2.5 text-[13.5px] leading-relaxed text-[var(--fb-muted)]">
+            Enter your email and we&apos;ll send you a reset link.
+          </p>
 
-        {(error || formError) && (
-          <div className="flex items-center gap-2 px-3 py-2.5 mb-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
-            <AlertCircle size={16} />
-            {formError || error}
-          </div>
-        )}
-
-        {sent ? (
-          <div className="flex flex-col items-center gap-4 py-8">
-            <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center">
-              <CheckCircle2 size={32} className="text-emerald-400" />
+          {(error || formError) && (
+            <div role="alert" className="ffb-auth-alert mt-5">
+              <AlertCircle size={15} className="mt-px shrink-0" aria-hidden />
+              <span>{formError || error}</span>
             </div>
-            <p className="text-[var(--ff-text)] text-center">
-              Check your email for a reset link.
-            </p>
-            <Button variant="outline" onClick={() => navigate('/login')}>
-              Return to sign in
-            </Button>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <Input
-              label="Email"
-              type="email"
-              name="email"
-              placeholder="you@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              icon={<Mail size={16} />}
-              autoComplete="email"
-            />
-            <Button type="submit" loading={loading} className="w-full" size="lg">
-              Send Reset Link
-            </Button>
-          </form>
-        )}
+          )}
+
+          {sent ? (
+            <div className="mt-6 space-y-4">
+              <div role="status" className="ffb-auth-success">
+                <CheckCircle2 size={15} className="mt-px shrink-0" aria-hidden />
+                <span>Check your email for a reset link.</span>
+              </div>
+              <Button
+                variant="outline"
+                className="h-12 w-full rounded-full font-semibold"
+                onClick={() => navigate('/login')}
+              >
+                Return to sign in
+              </Button>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="mt-6 space-y-[18px]">
+              <Input
+                label="Email"
+                type="email"
+                name="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                icon={<Mail size={16} />}
+                autoComplete="email"
+              />
+              <Button type="submit" loading={loading} className="h-12 w-full font-semibold">
+                Send reset link
+              </Button>
+            </form>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 border-t border-[var(--fb-line)] bg-[var(--fb-soft)] px-5 py-3.5 sm:px-7">
+          <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-[var(--fb-muted)]">
+            Remembered it?
+          </span>
+          <Link
+            to="/login"
+            className="group inline-flex min-h-9 items-center gap-1.5 text-[12.5px] font-semibold text-[var(--fb-ink)]"
+          >
+            Back to sign in
+            <ArrowRight size={13} className="transition-transform group-hover:translate-x-0.5" aria-hidden />
+          </Link>
+        </div>
       </div>
     </AuthLayout>
   );

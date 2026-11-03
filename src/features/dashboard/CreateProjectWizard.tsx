@@ -63,8 +63,7 @@ function SettingSelect({
   const id = useId();
   return (
     <div>
-      <label className="mb-1 block text-[11px] font-medium text-[var(--ff-text-muted)]" htmlFor={id}>
-        {label}
+      <label className="mb-1 block text-[11px] font-medium text-[var(--ff-text-muted)]" htmlFor={id}>        {label}
       </label>
       {/* 16px on mobile prevents iOS Safari zoom-on-focus */}
       <select
@@ -265,7 +264,7 @@ export function CreateProjectWizard({
           <section>
             <div className="mb-1.5 flex items-center justify-between gap-2">
               <label
-                className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ff-text-muted)]"
+                className="ff-label text-[10px] font-semibold text-[var(--ff-text-muted)]"
                 htmlFor={promptId}
               >
                 What do you want to build?
@@ -287,7 +286,7 @@ export function CreateProjectWizard({
             />
             <div className="mt-1 flex items-center justify-between text-[10px] text-[var(--ff-text-dim)]">
               <span>The more specific you are, the better the first build.</span>
-              <span className={cn('font-mono tabular-nums', remaining < 100 && 'text-amber-500')}>
+              <span className={cn('font-mono tabular-nums', remaining < 100 && 'font-semibold text-[var(--fb-danger)]')}>
                 {prompt.length}/{MAX_PROMPT}
               </span>
             </div>
@@ -296,7 +295,7 @@ export function CreateProjectWizard({
           {/* App name */}
           <section>
             <label
-              className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--ff-text-muted)]"
+              className="ff-label mb-1.5 block text-[10px] font-semibold text-[var(--ff-text-muted)]"
               htmlFor={`${promptId}-name`}
             >
               App name <span className="font-normal normal-case tracking-normal text-[var(--ff-text-dim)]">(optional)</span>
@@ -312,11 +311,11 @@ export function CreateProjectWizard({
           {/* Archetypes */}
           <section>
             <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--ff-text-muted)]">
+              <span className="ff-label text-[10px] font-semibold text-[var(--ff-text-muted)]">
                 Start from an archetype
               </span>
               {selectedTemplate.id !== 'blank' && (
-                <span className="truncate pl-2 text-[11px] font-medium text-[var(--ff-primary)]">
+                <span className="truncate pl-2 text-[11px] font-medium text-[var(--fb-ink)]">
                   {selectedTemplate.name}
                 </span>
               )}
@@ -335,10 +334,10 @@ export function CreateProjectWizard({
                   <button
                     aria-pressed={isSelected}
                     className={cn(
-                      'group flex min-h-[44px] items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs font-medium transition-all',
+                      'group flex min-h-[44px] items-center gap-2 rounded-[14px] border px-3 py-2 text-left text-xs font-medium transition-all',
                       isSelected
-                        ? 'border-[var(--ff-primary)] bg-[var(--ff-primary)]/10 text-[var(--ff-primary)] shadow-sm'
-                        : 'border-[var(--ff-border)] bg-[var(--ff-surface-2)] text-[var(--ff-text-muted)] hover:-translate-y-px hover:border-[var(--ff-primary)]/40 hover:text-[var(--ff-text)]',
+                        ? 'border-[var(--fb-ink)] bg-[var(--fb-lime)] text-black'
+                        : 'border-[var(--fb-line)] bg-[var(--fb-soft)] text-[var(--fb-text-muted)] hover:-translate-y-px hover:border-[var(--fb-ink)]/40 hover:text-[var(--fb-ink)]',
                     )}
                     key={tpl.id}
                     onClick={() => handleSelectTemplate(tpl)}
@@ -348,10 +347,10 @@ export function CreateProjectWizard({
                     <span
                       className={cn(
                         'flex size-7 shrink-0 items-center justify-center rounded-lg transition-colors',
-                        isSelected ? 'bg-[var(--ff-primary)]/15' : 'bg-[var(--ff-bg)]',
+                        isSelected ? 'bg-black/10' : 'bg-[var(--fb-card)]',
                       )}
                     >
-                      <Icon size={14} style={{ color: isSelected ? 'var(--ff-primary)' : tpl.color }} />
+                      <Icon size={14} style={{ color: isSelected ? '#050505' : tpl.color }} />
                     </span>
                     <span className="min-w-0 truncate">{tpl.name}</span>
                   </button>
@@ -361,7 +360,7 @@ export function CreateProjectWizard({
           </section>
 
           {/* Settings */}
-          <section className="rounded-xl border border-[var(--ff-border)] bg-[var(--ff-surface-2)]/50">
+          <section className="rounded-[16px] border border-[var(--fb-line)] bg-[var(--fb-soft)]">
             <button
               aria-controls={advancedId}
               aria-expanded={showAdvanced}
@@ -381,7 +380,7 @@ export function CreateProjectWizard({
             </button>
 
             {showAdvanced && (
-              <div className="ff-fade-in space-y-3 border-t border-[var(--ff-border)] p-3" id={advancedId}>
+              <div className="ff-fade-in space-y-3 border-t border-[var(--fb-line)] p-3" id={advancedId}>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <SettingSelect label="State management" onChange={setStateManagement} value={stateManagement}>
                     <option value="provider">Provider</option>
@@ -422,10 +421,10 @@ export function CreateProjectWizard({
                 {/* What the backend decision will be */}
                 <p
                   className={cn(
-                    'flex items-start gap-2 rounded-lg px-2.5 py-2 text-[11px] leading-relaxed',
+                    'flex items-start gap-2 rounded-[12px] px-2.5 py-2 text-[11px] leading-relaxed',
                     willUseSupabase
-                      ? 'bg-[var(--ff-primary)]/10 text-[var(--ff-primary)]'
-                      : 'bg-[var(--ff-bg)] text-[var(--ff-text-muted)]',
+                      ? 'bg-[var(--fb-lime)] text-black'
+                      : 'bg-[var(--fb-card)] text-[var(--ff-text-muted)]',
                   )}
                 >
                   {willUseSupabase ? (
@@ -446,7 +445,7 @@ export function CreateProjectWizard({
         </div>
 
         {/* Footer */}
-        <div className="mt-4 flex flex-col-reverse gap-2 border-t border-[var(--ff-border)] pt-4 sm:flex-row sm:items-center sm:justify-end">
+        <div className="mt-4 flex flex-col-reverse gap-2 border-t border-[var(--fb-line)] pt-4 sm:flex-row sm:items-center sm:justify-end">
           <Button className="w-full sm:w-auto" onClick={handleClose} size="sm" variant="ghost">
             Cancel
           </Button>

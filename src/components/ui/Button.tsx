@@ -28,8 +28,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       default: 'ff-btn-primary',
       secondary: 'bg-[var(--ff-surface-2)] text-[var(--ff-text)] border border-[var(--ff-border)] hover:bg-[var(--ff-border)] transition-colors',
       ghost: 'ff-btn-ghost',
-      danger: 'bg-[var(--ff-error)] text-white hover:bg-red-600 transition-colors',
-      destructive: 'bg-[var(--ff-error)] text-white hover:bg-red-600 transition-colors',
+      danger: 'bg-red-600 text-white hover:bg-red-700 transition-colors',
+      destructive: 'bg-red-600 text-white hover:bg-red-700 transition-colors',
       outline: 'border border-[var(--ff-border)] text-[var(--ff-text)] hover:border-[var(--ff-primary)] hover:text-[var(--ff-primary)] transition-colors',
     };
 

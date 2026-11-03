@@ -5,7 +5,9 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useThemeStore } from '@/stores/theme.store';
 import { ProtectedRoute } from '@/app/ProtectedRoute';
 import { PublicOnlyRoute } from '@/app/PublicOnlyRoute';
-const LandingPage = lazy(() => import('@/pages/LandingPage').then((module) => ({ default: module.LandingPage })));
+const LandingPage = lazy(() =>
+  import('@/pages/BoldLandingPage').then((module) => ({ default: module.BoldLandingPage })),
+);
 const LoginPage = lazy(() => import('@/pages/LoginPage').then((module) => ({ default: module.LoginPage })));
 const SignupPage = lazy(() => import('@/pages/SignupPage').then((module) => ({ default: module.SignupPage })));
 const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage').then((module) => ({ default: module.ForgotPasswordPage })));
