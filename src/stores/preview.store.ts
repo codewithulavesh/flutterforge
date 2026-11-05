@@ -18,6 +18,8 @@ interface PreviewState {
   currentSessionId: string | null;
   isLoading: boolean;
   error: string | null;
+  /** true when last health ping succeeded, false when server unreachable, null = unknown */
+  serverOnline: boolean | null;
 
   // Derived
   getSession: (projectId: string) => PreviewSession | null;
@@ -28,13 +30,21 @@ interface PreviewState {
   pollStatus: (sessionId: string) => Promise<PreviewSession | null>;
   checkProjectStatus: (projectId: string) => Promise<PreviewSession | null>;
   stop: (sessionId: string) => Promise<void>;
+  /** Hot reload the warm `flutter run` process without a cold rebuild. */
+  reload: (projectId: string) => Promise<void>;
   resetSession: (projectId: string) => void;
   clearError: () => void;
+  /** Ping /health to determine if the harness server is reachable. */
+  pingServer: () => Promise<boolean>;
 }
 
 // Desktop builds always use the embedded preview compiler on the app origin.
 // Web builds may point at a separate preview host via VITE_PREVIEW_API_URL.
-const API_BASE = (typeof window !== 'undefined' && window.flutterforgeDesktop?.isDesktop
+// IMPORTANT: Leave VITE_PREVIEW_API_URL empty when running `npm run dev`
+// — Vite's proxy routes /api → localhost:8787 automatically.
+// Only set VITE_PREVIEW_API_URL when deploying the frontend separately from
+// the harness (e.g. staging) where you need to point at a specific host.
+const API_BASE = (typeof window !== 'undefined' && (window as any).flutterforgeDesktop?.isDesktop
   ? ''
   : import.meta.env.VITE_PREVIEW_API_URL || '').replace(/\/+$/, '');
 
@@ -68,9 +78,22 @@ export const usePreviewStore = create<PreviewState>((set, get) => ({
   currentSessionId: null,
   isLoading: false,
   error: null,
+  serverOnline: null,
 
   getSession: (projectId) => get().sessions[projectId] || null,
   getStatus: (projectId) => get().sessions[projectId]?.status || 'idle',
+
+  pingServer: async () => {
+    try {
+      const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
+      const online = res.ok || res.status < 500;
+      set({ serverOnline: online });
+      return online;
+    } catch {
+      set({ serverOnline: false });
+      return false;
+    }
+  },
 
   build: async (projectId, files, opts) => {
     set({ isLoading: true, error: null });
@@ -248,6 +271,22 @@ export const usePreviewStore = create<PreviewState>((set, get) => ({
         set((s) => ({ sessions: { ...s.sessions, [pid]: next } }));
         break;
       }
+    }
+  },
+
+  reload: async (projectId) => {
+    const res = await fetch(`${API_BASE}/api/preview/project/${projectId}/reload`, { method: 'POST' });
+    const text = await res.text();
+    let data: { ok?: boolean; error?: string } = {};
+    if (text.trim()) {
+      try {
+        data = JSON.parse(text) as typeof data;
+      } catch {
+        throw new Error('The preview compiler returned an unreadable response.');
+      }
+    }
+    if (!res.ok || data.ok === false) {
+      throw new Error(data.error || 'Hot reload failed.');
     }
   },
 

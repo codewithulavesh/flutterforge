@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Lenis from 'lenis';
+import 'lenis/dist/lenis.css';
 import {
   ArrowRight,
   ArrowUp,
@@ -27,6 +28,8 @@ import {
 } from 'lucide-react';
 import CardNav, { type CardNavItem } from '@/components/CardNav';
 import { BrandLogo } from '@/components/BrandLogo';
+import { Pricing } from '@/components/blocks/pricing';
+import { LANDING_PLANS } from '@/components/blocks/pricing-plans';
 import { useAuthStore } from '@/stores/auth.store';
 import { useThemeStore } from '@/stores/theme.store';
 import { HERO_PROMPT_KEY } from '@/utils/landing';
@@ -109,7 +112,13 @@ function scrollToTarget(target: string | number, offset = -92) {
 function useSmoothScroll() {
   useEffect(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const instance = new Lenis({ lerp: 0.1, smoothWheel: true, wheelMultiplier: 1, touchMultiplier: 1.1, anchors: false });
+    const instance = new Lenis({
+      lerp: 0.08,
+      smoothWheel: true,
+      wheelMultiplier: 1,
+      touchMultiplier: 1.2,
+      anchors: false,
+    });
     lenis = instance;
     let raf = 0;
     const loop = (time: number) => {
@@ -283,6 +292,7 @@ function CodeCard({ full = false }: { full?: boolean }) {
           'ffb-scrollbar overflow-auto p-4 font-mono text-[10.5px] leading-[1.85]',
           full ? 'h-[420px]' : 'ffb-code-fade h-[178px]',
         )}
+        data-lenis-prevent
       >
         <code>
           <span className="text-[#7ad3d1]">class</span> HomeScreen <span className="text-[#7ad3d1]">extends</span> StatelessWidget {'{\n'}
@@ -335,6 +345,7 @@ function LogCard({ full = false }: { full?: boolean }) {
           'ffb-scrollbar space-y-2 overflow-auto p-4 font-mono text-[10.5px] leading-relaxed',
           full ? 'h-[420px]' : 'ffb-code-fade h-[178px]',
         )}
+        data-lenis-prevent
       >
         {LOG_LINES.map((line) => (
           <p
@@ -556,6 +567,7 @@ export function BoldLandingPage() {
       description: 'Real Flutter files, desktop targets, honest answers.',
       links: [
         { label: 'Desktop export', href: '#desktop' },
+        { label: 'Pricing', href: '#pricing' },
         { label: 'FAQ', href: '#faq' },
         { label: 'Project team', href: '#team' },
       ],
@@ -1190,11 +1202,14 @@ export function BoldLandingPage() {
           </div>
         </section>
 
+        {/* ── Pricing ────────────────────────────────────────────────── */}
+        <Pricing plans={LANDING_PLANS} />
+
         {/* ── FAQ ────────────────────────────────────────────────────── */}
         <section id="faq" className="scroll-mt-28 px-4 py-20 sm:px-6">
           <div className="mx-auto max-w-[1100px]">
             <Reveal>
-              <Eyebrow>07 — Answers</Eyebrow>
+              <Eyebrow>08 — Answers</Eyebrow>
               <h2 className="ffb-display mt-4 text-[clamp(40px,5.6vw,64px)]">Common questions</h2>
             </Reveal>
             <div className="ffb-faq mt-8 space-y-2">
@@ -1306,6 +1321,11 @@ export function BoldLandingPage() {
               <li>
                 <button type="button" onClick={() => go('desktop')} className={footerLink}>
                   Desktop export
+                </button>
+              </li>
+              <li>
+                <button type="button" onClick={() => go('pricing')} className={footerLink}>
+                  Pricing
                 </button>
               </li>
             </FooterCol>

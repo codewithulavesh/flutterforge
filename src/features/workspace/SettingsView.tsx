@@ -1,14 +1,38 @@
-import { Settings as SettingsIcon, Save, Cpu, RefreshCw } from 'lucide-react';
+import { Settings as SettingsIcon, Save, Cpu, RefreshCw, KeyRound } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useProjectStore } from '@/stores/project.store';
+import { useAuthStore } from '@/stores/auth.store';
+import { useCredentialsStore, type CredentialProvider } from '@/stores/credentials.store';
 import { toast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { getHarnessCapabilities, type HarnessCapabilities } from '@/agent/harnessClient';
 
+const PROVIDER_LABELS: Record<CredentialProvider, { name: string; hint: string; placeholder: string }> = {
+  openrouter: {
+    name: 'OpenRouter',
+    hint: 'Frontier and fast models. Keys start with sk-or-.',
+    placeholder: 'sk-or-v1-…',
+  },
+  deepseek: {
+    name: 'DeepSeek',
+    hint: 'Native DeepSeek route for the fast model.',
+    placeholder: 'sk-…',
+  },
+};
+
 export function SettingsView() {
   const { currentProject, updateProject } = useProjectStore();
+  const plan = useAuthStore((state) => state.profile?.plan ?? 'free');
+  const {
+    status: credentialStatus,
+    loading: credentialLoading,
+    error: credentialError,
+    load: loadCredentials,
+    saveKey,
+    removeKey,
+  } = useCredentialsStore();
   const [name, setName] = useState(currentProject?.name ?? '');
   const [description, setDescription] = useState(currentProject?.description ?? '');
   const [flutterVersion, setFlutterVersion] = useState(currentProject?.flutter_version ?? '3.24.0');
@@ -17,6 +41,7 @@ export function SettingsView() {
   const [platform, setPlatform] = useState(currentProject?.platform ?? 'web');
   const [caps, setCaps] = useState<HarnessCapabilities | null>(null);
   const [checkingEngine, setCheckingEngine] = useState(false);
+  const [keyDrafts, setKeyDrafts] = useState<Record<CredentialProvider, string>>({ openrouter: '', deepseek: '' });
 
   async function refreshEngine() {
     setCheckingEngine(true);
@@ -26,9 +51,37 @@ export function SettingsView() {
 
   useEffect(() => {
     void refreshEngine();
-  }, []);
+    void loadCredentials();
+  }, [loadCredentials]);
 
   if (!currentProject) return null;
+
+  const frontierIncluded = ['pro', 'team'].includes(plan.toLowerCase())
+    || Boolean(credentialStatus?.credentials.openrouter.configured);
+  const storageLabel = credentialStatus?.storage === 'os-encrypted'
+    ? 'Keys are encrypted by the operating system and never leave this machine.'
+    : window.flutterforgeDesktop?.isDesktop
+      ? 'Keys are stored in a local file with owner-only permissions.'
+      : 'Browser session only — install the desktop app to store keys securely.';
+
+  async function handleSaveKey(provider: CredentialProvider) {
+    const value = keyDrafts[provider].trim();
+    if (!value) return;
+    const saved = await saveKey(provider, value);
+    if (saved) {
+      setKeyDrafts((current) => ({ ...current, [provider]: '' }));
+      toast('success', `${PROVIDER_LABELS[provider].name} key saved`);
+    } else {
+      toast('error', useCredentialsStore.getState().error ?? 'Could not save the key.');
+    }
+  }
+
+  async function handleRemoveKey(provider: CredentialProvider) {
+    if (!confirm(`Remove the ${PROVIDER_LABELS[provider].name} key?`)) return;
+    const removed = await removeKey(provider);
+    if (removed) toast('success', `${PROVIDER_LABELS[provider].name} key removed`);
+    else toast('error', useCredentialsStore.getState().error ?? 'Could not remove the key.');
+  }
 
   async function handleSave() {
     const saved = await updateProject(currentProject!.id, {
@@ -109,6 +162,89 @@ export function SettingsView() {
           </div>
 
           <Button icon={<Save size={14} />} onClick={handleSave}>Save Settings</Button>
+
+          <div className="ff-card p-4 space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <KeyRound size={15} className="text-[var(--ff-primary)]" />
+                <h3 className="text-sm font-semibold text-[var(--ff-text)]">Model access</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant={frontierIncluded ? 'success' : 'info'}>
+                  {frontierIncluded ? 'Frontier included' : `${plan} plan`}
+                </Badge>
+                <button
+                  onClick={() => void loadCredentials()}
+                  className="p-1 rounded text-[var(--ff-text-dim)] hover:text-[var(--ff-text)] hover:bg-white/5 transition-colors"
+                  title="Re-check connected keys"
+                  aria-label="Re-check connected keys"
+                  disabled={credentialLoading}
+                >
+                  <RefreshCw size={13} className={credentialLoading ? 'animate-spin' : ''} />
+                </button>
+              </div>
+            </div>
+
+            <p className="text-xs text-[var(--ff-text-muted)]">
+              Auto routing sends planning, design, and the first code pass to the frontier model;
+              edits, repairs, and chat use the fast model. Pro, Team, or your own OpenRouter key
+              unlocks the frontier tier.
+            </p>
+
+            {(['openrouter', 'deepseek'] as const).map((provider) => {
+              const entry = credentialStatus?.credentials[provider];
+              const meta = PROVIDER_LABELS[provider];
+              return (
+                <div key={provider} className="rounded-lg border border-[var(--ff-border)]/60 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-[var(--ff-text)]">{meta.name}</p>
+                      <p className="text-[11px] text-[var(--ff-text-dim)]">{meta.hint}</p>
+                    </div>
+                    <Badge variant={entry?.configured ? 'success' : 'info'}>
+                      {entry?.configured ? 'Connected' : 'Not set'}
+                    </Badge>
+                  </div>
+                  {entry?.configured && (
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--ff-text-dim)] font-mono">
+                      <span>{entry.masked}</span>
+                      {entry.source && <span>· {entry.source}</span>}
+                      <button
+                        onClick={() => void handleRemoveKey(provider)}
+                        className="text-[var(--ff-text-muted)] underline-offset-2 hover:text-[var(--ff-text)] hover:underline"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <label className="sr-only" htmlFor={`key-${provider}`}>{meta.name} API key</label>
+                    <input
+                      id={`key-${provider}`}
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="ff-input w-full px-3 py-2 text-xs font-mono"
+                      placeholder={entry?.configured ? 'Replace key…' : meta.placeholder}
+                      value={keyDrafts[provider]}
+                      onChange={(event) => setKeyDrafts((current) => ({ ...current, [provider]: event.target.value }))}
+                    />
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={!keyDrafts[provider].trim() || credentialLoading}
+                      onClick={() => void handleSaveKey(provider)}
+                    >
+                      Save key
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+
+            <p className="text-[11px] text-[var(--ff-text-dim)]">{storageLabel}</p>
+            {credentialError && <p className="text-[11px] text-[var(--ff-danger)]">{credentialError}</p>}
+          </div>
 
           <div className="ff-card p-4 space-y-3">
             <div className="flex items-center justify-between gap-2">

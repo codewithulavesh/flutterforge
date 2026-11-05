@@ -2,10 +2,13 @@
 node_modules/
 dist/
 dist-ssr/
+dist-server/
 *.local
 release/
 .tmp/
 .dsh-test/
+.agent-cache/
+.qoder/
 
 # Logs
 logs/
@@ -40,3 +43,10 @@ harness-workspaces/
 
 # Supabase
 supabase/.temp/
+
+# Stray external IDE algorithm categories
+DynamicProgramming/
+Graphs/
+Arrays/
+Geometry/
+organizer.json

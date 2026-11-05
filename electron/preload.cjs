@@ -15,6 +15,14 @@ contextBridge.exposeInMainWorld('flutterforgeDesktop', {
   openPath: (target) => ipcRenderer.invoke('desktop:open-path', target),
   showItemInFolder: (target) => ipcRenderer.invoke('desktop:show-item', target),
   harnessHealth: () => ipcRenderer.invoke('desktop:harness-health'),
+  vault: {
+    status: () => ipcRenderer.invoke('vault:status'),
+    setKey: (provider, key) => ipcRenderer.invoke('vault:set-key', provider, key),
+    removeKey: (provider) => ipcRenderer.invoke('vault:remove-key', provider),
+  },
+  qa: {
+    capture: (payload) => ipcRenderer.invoke('qa:capture', payload),
+  },
   onMenuAction: (callback) => {
     const listener = (_event, action) => callback(action);
     ipcRenderer.on('menu:action', listener);

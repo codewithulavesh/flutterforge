@@ -13,9 +13,11 @@ import { MultiFileCodeGenerator } from './codeGenerator';
 import { AgentValidator } from './validator';
 import { OpenRouterClient } from './llmClient';
 import { VectorStore } from './vectorStore';
-import { generateMinimalStarterFiles } from '@/utils/flutterTemplates';
+import { SkillRegistry, type FlutterSkill } from './skills';
+import { generateMinimalStarterFiles } from '../utils/flutterTemplates';
 
 export * from './types';
+export * from './skills';
 export * from './prompts';
 export * from './planner';
 export * from './context';
@@ -46,11 +48,11 @@ export class FlutterSupabaseAgent {
       const fullEvent: AgentEvent = { ...event, timestamp: new Date().toISOString() };
       logs.push(`[${fullEvent.phase.toUpperCase()}] ${fullEvent.message}`);
       try {
-        const { useTerminalStore } = require('@/stores/terminal.store');
+        const { useTerminalStore } = require('../stores/terminal.store');
         useTerminalStore.getState().addAgentEvent(fullEvent as any);
       } catch {
         // browser / non-cjs fallback
-        import('@/stores/terminal.store').then((m) => m.useTerminalStore.getState().addAgentEvent(fullEvent as any)).catch(() => {});
+        import('../stores/terminal.store').then((m) => m.useTerminalStore.getState().addAgentEvent(fullEvent as any)).catch(() => {});
       }
       options.onEvent?.(fullEvent);
     };
@@ -62,6 +64,18 @@ export class FlutterSupabaseAgent {
     const stateManagement = options.stateManagement || 'provider';
     const conversationHistory = options.conversationHistory || [];
     const isIncremental = options.isIncremental || false;
+
+    // Resolve modular capability skills
+    const rawSkills: FlutterSkill[] = options.skills && options.skills.length > 0
+      ? (typeof options.skills[0] === 'string'
+          ? SkillRegistry.getAllSkills().filter((s) => (options.skills as string[]).includes(s.id))
+          : (options.skills as FlutterSkill[]))
+      : SkillRegistry.getActiveSkills();
+    // Local-only requests explicitly do not use Supabase backend
+    const activeSkills = context.usesSupabase === false
+      ? rawSkills.filter((s) => s.id !== 'supabase')
+      : rawSkills;
+    const skillsPromptInjection = SkillRegistry.formatPromptInjection(activeSkills);
 
     const envModel =
       (typeof import.meta !== 'undefined' && (import.meta.env?.VITE_AGENT_MODEL as string | undefined)) ||
@@ -79,8 +93,10 @@ export class FlutterSupabaseAgent {
         phase: 'analyzing',
         stepNumber: 1,
         totalSteps: TOTAL_STEPS,
-        message: 'Analyzing user request and project workspace...',
-        detail: `Found ${context.existingFiles.length} existing files in workspace.`,
+        message: activeSkills.length > 0
+          ? `Analyzing workspace with ${activeSkills.length} active Flutter skill(s): ${activeSkills.map((s) => s.name).join(', ')}`
+          : 'Analyzing user request and project workspace...',
+        detail: `Found ${(context.existingFiles || []).length} existing files in workspace.`,
       });
 
       // Phase 2: Feature Detection & Vector Pattern Retrieval
@@ -124,7 +140,7 @@ export class FlutterSupabaseAgent {
           message: 'Generating incremental changes...',
         });
 
-        const existingFiles = context.existingFiles.map((f) => ({ path: f.path, content: f.content }));
+        const existingFiles = (context.existingFiles || []).map((f) => ({ path: f.path, content: f.content }));
 
         let editSuccess = false;
         for (let attempt = 0; attempt < 2; attempt++) {
@@ -139,7 +155,7 @@ export class FlutterSupabaseAgent {
             );
 
             if (editFiles.length > 0) {
-              const existingFileMap = new Map(context.existingFiles.map((f) => [f.path, f.content]));
+              const existingFileMap = new Map((context.existingFiles || []).map((f) => [f.path, f.content]));
               generatedFiles = editFiles.map((f) => ({
                 ...f,
                 oldContent: existingFileMap.get(f.path),
@@ -169,7 +185,7 @@ export class FlutterSupabaseAgent {
         }
       }
 
-      if (isIncremental && !apiKey && context.existingFiles.length > 0) {
+      if (isIncremental && !apiKey && (context.existingFiles || []).length > 0) {
         throw new Error(
           'An AI key is required to make this project change safely. Your existing files were left unchanged.',
         );
@@ -208,7 +224,7 @@ export class FlutterSupabaseAgent {
                 totalSteps: TOTAL_STEPS,
                 message: 'Using smart structured planner for architecture design...',
               });
-              plan = AgentPlanner.plan(prompt, context, { stateManagement: stateManagement as AgentPlan['stateManagement'] });
+              plan = AgentPlanner.plan(prompt, context, { stateManagement: stateManagement as AgentPlan['stateManagement'], skills: activeSkills });
             }
           }
         } else {
@@ -218,7 +234,7 @@ export class FlutterSupabaseAgent {
             totalSteps: TOTAL_STEPS,
             message: 'No API key configured - using structured planner...',
           });
-          plan = AgentPlanner.plan(prompt, context, { stateManagement: stateManagement as AgentPlan['stateManagement'] });
+          plan = AgentPlanner.plan(prompt, context, { stateManagement: stateManagement as AgentPlan['stateManagement'], skills: activeSkills });
         }
         plan.domain = domain;
         plan.features = features;
@@ -240,7 +256,8 @@ export class FlutterSupabaseAgent {
         });
 
         if (apiKey) {
-          const semanticSummary = await AgentContextBuilder.buildSemanticContext(context, prompt);
+          const rawSummary = await AgentContextBuilder.buildSemanticContext(context, prompt);
+          const semanticSummary = skillsPromptInjection ? `${rawSummary}\n\n${skillsPromptInjection}` : rawSummary;
           let liveSuccess = false;
 
           // Attempt 1: Single-pass generation
@@ -305,7 +322,7 @@ export class FlutterSupabaseAgent {
               totalSteps: TOTAL_STEPS,
               message: 'All AI generation attempts failed - using structured fallback',
             });
-            const existingFileMap = new Map(context.existingFiles.map((f) => [f.path, f.content]));
+            const existingFileMap = new Map((context.existingFiles || []).map((f) => [f.path, f.content]));
             generatedFiles = this.generateBaselineFiles(plan, context).map((f) => ({
               ...f,
               oldContent: existingFileMap.get(f.path),
@@ -319,7 +336,7 @@ export class FlutterSupabaseAgent {
             totalSteps: TOTAL_STEPS,
             message: 'No API key configured - using structured generator...',
           });
-          const existingFileMap = new Map(context.existingFiles.map((f) => [f.path, f.content]));
+          const existingFileMap = new Map((context.existingFiles || []).map((f) => [f.path, f.content]));
           generatedFiles = this.generateBaselineFiles(plan, context).map((f) => ({
             ...f,
             oldContent: existingFileMap.get(f.path),
@@ -331,7 +348,7 @@ export class FlutterSupabaseAgent {
       // Ensure we always have a REAL plan for the E2E result.
       // Incremental edits skip planning, so synthesize the base plan for metadata.
       if (!plan) {
-        plan = AgentPlanner.plan(prompt, context, { stateManagement: stateManagement as AgentPlan['stateManagement'] });
+        plan = AgentPlanner.plan(prompt, context, { stateManagement: stateManagement as AgentPlan['stateManagement'], skills: activeSkills });
         plan.domain = domain;
         plan.features = features;
       }
@@ -409,13 +426,13 @@ export class FlutterSupabaseAgent {
         generatedFiles,
       });
 
-      let validationReport = AgentValidator.validate(generatedFiles);
+      let validationReport = AgentValidator.validate(generatedFiles, { usesSupabase: context.usesSupabase });
 
       if (options.enableAutoHealing !== false && !validationReport.isValid) {
         // Deterministic regex fixes FIRST on every path (typo imports,
         // missing deps, stale pins) — cheap and exact. The LLM then only
         // sees what regex cannot fix.
-        const healed = AgentValidator.autoHeal(generatedFiles, validationReport);
+        const healed = AgentValidator.autoHeal(generatedFiles, validationReport, { usesSupabase: context.usesSupabase });
         generatedFiles = healed.healedFiles;
         validationReport = healed.report;
         if (healed.report.fixedIssues.length > 0) {
@@ -433,6 +450,7 @@ export class FlutterSupabaseAgent {
           // rounds (default 1, max 3) so a failing model can't hang the run.
           const maxRounds = Math.min(Math.max(options.maxHealingRounds ?? 1, 1), 3);
           for (let round = 0; round < maxRounds && !validationReport.isValid; round++) {
+            if (options.signal?.aborted) throw new Error('Generation cancelled by user');
             emit({
               phase: 'auto_healing',
               stepNumber: 6,
@@ -442,6 +460,7 @@ export class FlutterSupabaseAgent {
             });
 
             for (const issue of validationReport.issues.slice(0, 3)) {
+              if (options.signal?.aborted) throw new Error('Generation cancelled by user');
               // Never pass pubspec.yaml or non-Dart files to the LLM Dart code healer.
               // Dependencies and configs must be resolved deterministically.
               if (issue.filePath === 'pubspec.yaml' || !issue.filePath.endsWith('.dart')) continue;
@@ -462,11 +481,11 @@ export class FlutterSupabaseAgent {
             }
 
             // Always re-apply deterministic fixes (missing dependencies, pubspec pins, etc.)
-            const healed = AgentValidator.autoHeal(generatedFiles, validationReport);
+            const healed = AgentValidator.autoHeal(generatedFiles, validationReport, { usesSupabase: context.usesSupabase });
             generatedFiles = healed.healedFiles;
 
             // Re-validate after each healing round
-            validationReport = AgentValidator.validate(generatedFiles);
+            validationReport = AgentValidator.validate(generatedFiles, { usesSupabase: context.usesSupabase });
           }
         }
       }
@@ -507,6 +526,15 @@ export class FlutterSupabaseAgent {
           totalSteps: TOTAL_STEPS,
           message: `✓ ${f.path}`,
         });
+        if (options.onFile) {
+          options.onFile({
+            path: f.path,
+            content: f.content,
+            action: f.action ?? 'created',
+            language: f.language ?? (f.path.endsWith('.dart') ? 'dart' : f.path.endsWith('.yaml') ? 'yaml' : f.path.endsWith('.sql') ? 'sql' : 'text'),
+            node: 'generation',
+          });
+        }
       }
 
       emit({
@@ -550,30 +578,7 @@ export class FlutterSupabaseAgent {
    * instead of the full Supabase template.
    */
   private static generateBaselineFiles(plan: AgentPlan, context: AgentContext): AgentFileArtifact[] {
-    if (context.usesSupabase !== false) {
-      return MultiFileCodeGenerator.generateAllFiles(plan, context);
-    }
-    return generateMinimalStarterFiles(plan.appName, context.projectId).map((file) => {
-      const extension = file.path.split('.').pop() ?? '';
-      const language: AgentFileArtifact['language'] = extension === 'dart'
-        ? 'dart'
-        : extension === 'yaml'
-          ? 'yaml'
-          : extension === 'sql'
-            ? 'sql'
-            : extension === 'json'
-              ? 'json'
-              : extension === 'md'
-                ? 'markdown'
-                : 'env';
-      return {
-        path: file.path,
-        content: file.content ?? '',
-        language,
-        isNew: true,
-        action: 'created' as const,
-      };
-    });
+    return MultiFileCodeGenerator.generateAllFiles(plan, context);
   }
 
   private static buildSummary(
@@ -615,7 +620,7 @@ export class FlutterSupabaseAgent {
         `Live output missing ${missing.length} file(s) — backfilling from structured generator: ${missing.slice(0, 5).map((f) => f.path).join(', ')}${missing.length > 5 ? '...' : ''}`,
       );
     }
-    const existingFileMap = new Map(context.existingFiles.map((f) => [f.path, f.content]));
+    const existingFileMap = new Map((context.existingFiles || []).map((f) => [f.path, f.content]));
     return [...liveFiles, ...missing].map((f) => ({
       ...f,
       oldContent: existingFileMap.get(f.path),

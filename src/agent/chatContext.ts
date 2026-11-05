@@ -1,5 +1,5 @@
-import type { AIMessage, ProjectFile } from '@/types';
-import { detectSupabaseNeed } from '@/utils/backendNeed';
+import type { AIMessage, ProjectFile } from '../types';
+import { detectSupabaseNeed } from '../utils/backendNeed';
 
 export interface ChatContextInput {
   projectName: string;

@@ -1,3 +1,5 @@
+import type { FlutterSkill } from './skills';
+
 export type AgentPhase =
   | 'analyzing'
   | 'feature_detection'
@@ -126,6 +128,55 @@ export interface ModelPlan {
   fields: Array<{ name: string; dartType: string; isNullable: boolean; jsonKey: string }>;
 }
 
+/**
+ * The design contract for a generated app. The planner commits to a direction
+ * before any screen is written, and every screen is expected to consume these
+ * tokens instead of inventing colors, fonts, spacing or motion per widget.
+ */
+export interface DesignBrief {
+  direction: string;
+  palette: {
+    primary: string;
+    secondary: string;
+    accent: string;
+    background: string;
+    surface: string;
+    ink: string;
+    muted: string;
+    backgroundDark: string;
+    surfaceDark: string;
+    inkDark: string;
+  };
+  typography: {
+    display: string;
+    body: string;
+    mono: string;
+    displayWeight: number;
+    bodyWeight: number;
+  };
+  spacing: {
+    unit: number;
+    scale: number[];
+  };
+  radius: {
+    sm: number;
+    md: number;
+    lg: number;
+    pill: number;
+  };
+  motion: {
+    fastMs: number;
+    baseMs: number;
+    slowMs: number;
+    curve: string;
+    style: string;
+  };
+  voice: {
+    tone: string;
+    rule: string;
+  };
+}
+
 export interface AgentPlan {
   id: string;
   appName: string;
@@ -146,6 +197,10 @@ export interface AgentPlan {
     backgroundColor: string;
     isDarkPreferred: boolean;
   };
+  /** Palette, type, spacing, radius, motion and copy voice for every screen. */
+  design?: DesignBrief;
+  /** Active modular Flutter capability skills applied to this plan. */
+  appliedSkills?: string[];
   dependencies: Record<string, string>;
   devDependencies: Record<string, string>;
   schema: DatabaseSchemaPlan;
@@ -234,6 +289,14 @@ export interface AgentGenerationOptions {
   onFile?: (file: { path: string; content: string; action: 'created' | 'modified' | 'deleted'; language: string; node: string }) => void;
   isIncremental?: boolean;
   conversationHistory?: Array<{ role: string; content: string }>;
+  /** Design contract for this project; the harness persists it per workspace. */
+  designBrief?: DesignBrief;
+  /** Routing hint: frontier for first-pass work, economy for routine edits. */
+  modelRole?: 'frontier' | 'economy';
+  /** Account plan the local engine uses to enforce frontier entitlement. */
+  plan?: string;
+  /** Active capability skills to guide planning and code generation. */
+  skills?: FlutterSkill[] | string[];
   /** AbortSignal from the UI Stop button — cancels backend streams / LLM calls. */
   signal?: AbortSignal;
 }

@@ -7,6 +7,7 @@ import {
   NO_BACKEND_RULES,
 } from './prompts';
 import { MultiFileCodeGenerator } from './codeGenerator';
+import { AgentPlanner } from './planner';
 import { keyPool } from './keyPool';
 import { VectorStore } from './vectorStore';
 import type { AgentPlan, AgentFileArtifact, AgentContext, CodePattern } from './types';
@@ -134,6 +135,7 @@ export class OpenRouterClient {
       responseFormat?: { type: string };
       signal?: AbortSignal;
       onToken?: (token: string) => void;
+      onReasoning?: (reasoning: string) => void;
       onRetry?: (message: string) => void;
       idleTimeoutMs?: number;
       timeoutMs?: number;
@@ -247,23 +249,41 @@ export class OpenRouterClient {
             .join('\n');
           if (!data || data === '[DONE]') return;
 
-          let ssePayload: { choices?: Array<{ delta?: { content?: string | null } }> };
+          let ssePayload: {
+            choices?: Array<{
+              delta?: {
+                content?: string | null;
+                reasoning?: string | null;
+                reasoning_content?: string | null;
+              };
+            }>;
+          };
           try {
             ssePayload = JSON.parse(data) as typeof ssePayload;
           } catch {
             return;
           }
-          const token = ssePayload.choices?.[0]?.delta?.content;
+
+          // Active frame received — bump idle timeout immediately
+          bumpIdle();
+
+          const delta = ssePayload.choices?.[0]?.delta;
+          const reasoning = delta?.reasoning || delta?.reasoning_content;
+          if (typeof reasoning === 'string' && reasoning) {
+            options?.onReasoning?.(reasoning);
+          }
+
+          const token = delta?.content;
           if (typeof token !== 'string' || !token) return;
           content += token;
           options?.onToken?.(token);
-          bumpIdle();
         };
 
         try {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
+            bumpIdle();
             buffer += decoder.decode(value, { stream: true });
             const frames = buffer.split(/\r?\n\r?\n/);
             buffer = frames.pop() ?? '';
@@ -314,6 +334,7 @@ export class OpenRouterClient {
       maxTokens?: number;
       signal?: AbortSignal;
       onToken?: (token: string) => void;
+      onReasoning?: (reasoning: string) => void;
       onRetry?: (message: string) => void;
       idleTimeoutMs?: number;
       timeoutMs?: number;
@@ -324,6 +345,7 @@ export class OpenRouterClient {
       maxTokens: options?.maxTokens,
       signal: options?.signal,
       onToken: options?.onToken,
+      onReasoning: options?.onReasoning,
       onRetry: options?.onRetry,
       idleTimeoutMs: options?.idleTimeoutMs,
       timeoutMs: options?.timeoutMs,
@@ -422,6 +444,10 @@ export class OpenRouterClient {
         await import('../utils/appId');
       const liveAppId =
         parsed.appId || generateUniqueAppId(liveAppName, context.projectId || undefined);
+      const liveDomain = parsed.domain || 'general';
+      // A live plan may omit the design contract; derive the same deterministic
+      // brief so every generated screen still shares one palette and type scale.
+      const design = parsed.design || AgentPlanner.planDesign(prompt, liveDomain);
 
       return {
         id: crypto.randomUUID(),
@@ -432,13 +458,14 @@ export class OpenRouterClient {
         appDescription: parsed.appDescription || `Production-grade app for ${prompt}`,
         architecture: 'feature_first',
         stateManagement: (stateManagement || 'provider') as AgentPlan['stateManagement'],
-        domain: parsed.domain || 'general',
+        domain: liveDomain,
         theme: parsed.theme || {
-          primaryColor: '#02AFB9',
-          secondaryColor: '#F07067',
-          backgroundColor: '#FBFADD',
+          primaryColor: design.palette.primary,
+          secondaryColor: design.palette.secondary,
+          backgroundColor: design.palette.background,
           isDarkPreferred: false,
         },
+        design,
         dependencies: parsed.dependencies || {
           supabase_flutter: '^2.8.0',
           go_router: '^14.6.2',
@@ -510,6 +537,7 @@ export class OpenRouterClient {
         bundleId: (plan as Partial<AgentPlan>).bundleId,
         domain: plan.domain,
         theme: plan.theme,
+        design: plan.design,
         screens: plan.screens.map((s) => ({ name: s.name, filePath: s.filePath, description: s.description, widgets: s.widgets, stateNeeds: s.stateNeeds })),
         models: plan.models.map((m) => ({ name: m.name, filePath: m.filePath, tableName: m.tableName, fields: m.fields })),
         services: plan.services.map((s) => ({ name: s.name, filePath: s.filePath, purpose: s.purpose, methods: s.methods })),

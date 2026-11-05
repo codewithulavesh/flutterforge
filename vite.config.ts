@@ -42,6 +42,11 @@ export default defineConfig({
         target: process.env.VITE_HARNESS_DEV_URL || 'http://127.0.0.1:8787',
         changeOrigin: true,
       },
+      // One-click publish web host.
+      '/publish': {
+        target: process.env.VITE_HARNESS_DEV_URL || 'http://127.0.0.1:8787',
+        changeOrigin: true,
+      },
     },
   },
 });

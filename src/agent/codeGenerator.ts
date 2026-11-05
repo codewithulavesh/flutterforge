@@ -7,6 +7,35 @@ import type {
   ScreenPlan,
 } from './types';
 import { SupabaseSchemaGenerator } from './schemaGenerator';
+import { AgentPlanner } from './planner';
+
+const SAFE_CURVES = new Set([
+  'linear', 'ease', 'easeIn', 'easeOut', 'easeInOut', 'fastOutSlowIn',
+  'easeInQuad', 'easeOutQuad', 'easeInOutQuad',
+  'easeInCubic', 'easeOutCubic', 'easeInOutCubic',
+  'easeInQuart', 'easeOutQuart', 'easeInOutQuart',
+  'easeInExpo', 'easeOutExpo', 'easeInOutExpo',
+  'easeInBack', 'easeOutBack', 'easeInOutBack',
+]);
+
+function dartHex(value: string | undefined, fallback: string): string {
+  const raw = String(value ?? '').replace('#', '').trim();
+  return /^[0-9A-Fa-f]{6}$/.test(raw) ? raw.toUpperCase() : fallback;
+}
+
+function dartFont(value: string | undefined, fallback: string): string {
+  const cleaned = String(value ?? '').replace(/[^A-Za-z0-9 ]/g, '').trim();
+  return cleaned || fallback;
+}
+
+function dartWeight(value: number | undefined, fallback: number): number {
+  const rounded = Math.round(Number(value ?? fallback) / 100) * 100;
+  return rounded >= 100 && rounded <= 900 ? rounded : fallback;
+}
+
+function dartCurve(value: string | undefined): string {
+  return value && SAFE_CURVES.has(value) ? value : 'easeOutCubic';
+}
 
 export class MultiFileCodeGenerator {
   /**
@@ -14,9 +43,10 @@ export class MultiFileCodeGenerator {
    */
   public static generateAllFiles(plan: AgentPlan, context: AgentContext): AgentFileArtifact[] {
     const artifacts: AgentFileArtifact[] = [];
+    const usesSupabase = context.usesSupabase !== false;
 
     // 1. Pubspec and config files
-    artifacts.push(this.generatePubspecYaml(plan));
+    artifacts.push(this.generatePubspecYaml(plan, usesSupabase));
     artifacts.push(this.generateAnalysisOptions());
 
     // 2. Core architecture
@@ -24,7 +54,7 @@ export class MultiFileCodeGenerator {
     artifacts.push(this.generateAppTheme(plan));
     artifacts.push(this.generateThemeController());
     artifacts.push(this.generateThemeToggleButton());
-    artifacts.push(this.generateAppRouter(plan));
+    artifacts.push(this.generateAppRouter(plan, usesSupabase));
     artifacts.push(this.generateFormatters());
 
     // 3. Reusable UI components
@@ -39,36 +69,211 @@ export class MultiFileCodeGenerator {
       artifacts.push(this.generateModelFile(model));
     }
 
-    // 5. Supabase services
-    artifacts.push(this.generateSupabaseService());
-    for (const service of plan.services) {
-      if (service.name === 'SupabaseService') continue;
-      artifacts.push(this.generateEntityService(service, plan));
+    // 5. Services
+    if (usesSupabase) {
+      artifacts.push(this.generateSupabaseService());
+      for (const service of plan.services) {
+        if (service.name === 'SupabaseService') continue;
+        artifacts.push(this.generateEntityService(service, plan));
+      }
+    } else {
+      for (const service of plan.services) {
+        if (service.name === 'SupabaseService') continue;
+        artifacts.push(this.generateLocalEntityService(service, plan));
+      }
     }
 
     // 6. State management providers
-    artifacts.push(this.generateAppProvider(plan));
+    artifacts.push(this.generateAppProvider(plan, usesSupabase));
 
     // 7. Feature screens
     for (const screen of plan.screens) {
-      artifacts.push(this.generateScreenFile(screen, plan));
+      artifacts.push(this.generateScreenFile(screen, plan, usesSupabase));
     }
 
     // 8. App entry points
     artifacts.push(this.generateAppDart(plan));
-    artifacts.push(this.generateMainDart(plan));
+    artifacts.push(this.generateMainDart(plan, usesSupabase));
 
-    // 9. Supabase migration SQL
-    const migrationSql = SupabaseSchemaGenerator.generateMigrationSql(plan.schema);
-    artifacts.push({
-      path: 'supabase/migrations/001_initial_schema.sql',
-      content: migrationSql,
-      language: 'sql',
-      description: 'Supabase PostgreSQL DDL and Row Level Security policies',
-      isNew: true,
-    });
+    // 9. Supabase migration SQL (only if cloud backend requested)
+    if (usesSupabase) {
+      const migrationSql = SupabaseSchemaGenerator.generateMigrationSql(plan.schema);
+      artifacts.push({
+        path: 'supabase/migrations/001_initial_schema.sql',
+        content: migrationSql,
+        language: 'sql',
+        description: 'Supabase PostgreSQL DDL and Row Level Security policies',
+        isNew: true,
+      });
+    }
 
     return artifacts;
+  }
+
+  private static generateSeedItems(model: ModelPlan | undefined, modelName: string, count = 5): string {
+    const fields = model?.fields || [];
+    const items: string[] = [];
+
+    const sampleTitles = [
+      'Production API Cluster',
+      'Telemetry Pipeline Node',
+      'PostgreSQL Primary Replica',
+      'Worker Job Queue',
+      'Redis Distributed Cache',
+      'Edge CDN Ingress',
+    ];
+
+    const sampleDescs = [
+      'High-throughput distributed compute node running v3.4.',
+      'Active message processing queue with automatic scaling.',
+      'Primary database instance with automated replication.',
+      'In-memory cache layer serving low-latency read traffic.',
+      'Global edge router with TLS termination and DDoS mitigation.',
+      'Background analytics batch processor with hourly triggers.',
+    ];
+
+    for (let i = 0; i < count; i++) {
+      const fieldAssignments = fields.map((f) => {
+        const lower = f.name.toLowerCase();
+        if (lower === 'id') {
+          return `        ${f.name}: '${i + 1}',`;
+        }
+        if (f.dartType === 'String') {
+          if (lower.includes('title') || lower.includes('name')) {
+            return `        ${f.name}: '${sampleTitles[i % sampleTitles.length]}',`;
+          }
+          if (lower.includes('desc') || lower.includes('detail') || lower.includes('message')) {
+            return `        ${f.name}: '${sampleDescs[i % sampleDescs.length]}',`;
+          }
+          if (lower.includes('email')) {
+            return `        ${f.name}: 'member${i + 1}@domain.com',`;
+          }
+          if (lower.includes('role')) {
+            return `        ${f.name}: '${['Admin', 'Editor', 'Viewer'][i % 3]}',`;
+          }
+          if (lower.includes('status')) {
+            return `        ${f.name}: '${['Active', 'Operational', 'Optimal'][i % 3]}',`;
+          }
+          if (lower.includes('category') || lower.includes('type')) {
+            return `        ${f.name}: '${['Infrastructure', 'Database', 'Compute'][i % 3]}',`;
+          }
+          if (lower.includes('action')) {
+            return `        ${f.name}: '${['CLUSTER_PROVISIONED', 'BACKUP_SNAPSHOT', 'FAILOVER_TEST', 'CACHE_FLUSHED'][i % 4]}',`;
+          }
+          if (lower.includes('image') || lower.includes('url') || lower.includes('avatar')) {
+            return `        ${f.name}: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=400',`;
+          }
+          return `        ${f.name}: '${modelName} Record #${i + 1}',`;
+        }
+        if (f.dartType === 'double') {
+          if (lower.includes('price') || lower.includes('amount') || lower.includes('cost')) {
+            return `        ${f.name}: ${(19.99 * (i + 1)).toFixed(2)},`;
+          }
+          if (lower.includes('rate') || lower.includes('load') || lower.includes('percent')) {
+            return `        ${f.name}: ${(24.5 + i * 11.2).toFixed(1)},`;
+          }
+          return `        ${f.name}: ${(10.5 * (i + 1)).toFixed(1)},`;
+        }
+        if (f.dartType === 'int') {
+          if (lower.includes('count') || lower.includes('quantity') || lower.includes('total')) {
+            return `        ${f.name}: ${(i + 1) * 12},`;
+          }
+          return `        ${f.name}: ${(i + 1) * 5},`;
+        }
+        if (f.dartType === 'bool') {
+          return `        ${f.name}: ${i % 2 === 0 ? 'true' : 'false'},`;
+        }
+        if (f.dartType.includes('DateTime')) {
+          return `        ${f.name}: DateTime.now().subtract(const Duration(hours: ${i * 6 + 1})),`;
+        }
+        if (f.isNullable) {
+          return `        ${f.name}: null,`;
+        }
+        return `        ${f.name}: '',`;
+      });
+
+      items.push(`      ${modelName}(\n${fieldAssignments.join('\n')}\n      ),`);
+    }
+
+    return items.join('\n');
+  }
+
+  private static generateLocalEntityService(service: ServicePlan, plan: AgentPlan): AgentFileArtifact {
+    const entityName = service.name.replace('Service', '');
+    const modelName = entityName;
+    const modelSnake = this.toSnakeCase(modelName);
+    const model = plan.models.find((m) => m.name === modelName) || plan.models[0];
+    const seedCode = this.generateSeedItems(model, modelName, 5);
+
+    const content = `import '../models/${modelSnake}.dart';
+
+class ${service.name} {
+  static final ${service.name} _instance = ${service.name}._internal();
+  factory ${service.name}() => _instance;
+
+  final List<${modelName}> _items = [];
+
+  ${service.name}._internal() {
+    _seedInitialData();
+  }
+
+  void _seedInitialData() {
+    if (_items.isNotEmpty) return;
+    _items.addAll([
+${seedCode}
+    ]);
+  }
+
+  Future<List<${modelName}>> fetchAll() async {
+    await Future.delayed(const Duration(milliseconds: 100));
+    return List<${modelName}>.from(_items);
+  }
+
+  Stream<List<${modelName}>> streamAll() async* {
+    yield List<${modelName}>.from(_items);
+  }
+
+  Future<${modelName}?> create(${modelName} item) async {
+    await Future.delayed(const Duration(milliseconds: 100));
+    _items.insert(0, item);
+    return item;
+  }
+
+  Future<bool> update(String id, ${modelName} updated) async {
+    await Future.delayed(const Duration(milliseconds: 80));
+    final index = _items.indexWhere((item) => (item as dynamic).id == id);
+    if (index != -1) {
+      _items[index] = updated;
+      return true;
+    }
+    return false;
+  }
+
+  Future<bool> delete(String id) async {
+    await Future.delayed(const Duration(milliseconds: 80));
+    final before = _items.length;
+    _items.removeWhere((item) => (item as dynamic).id == id);
+    return _items.length < before;
+  }
+
+  Future<List<${modelName}>> search(String query) async {
+    await Future.delayed(const Duration(milliseconds: 60));
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) return fetchAll();
+    return _items.where((item) {
+      final json = item.toJson();
+      return json.values.any((v) => v?.toString().toLowerCase().contains(q) == true);
+    }).toList();
+  }
+}
+`;
+    return {
+      path: `lib/services/${this.toSnakeCase(service.name)}.dart`,
+      content,
+      language: 'dart',
+      description: `Singleton in-memory repository for ${modelName} with realistic seed data and search`,
+      isNew: true,
+    };
   }
 
   /**
@@ -182,12 +387,13 @@ export class MultiFileCodeGenerator {
     return artifacts;
   }
 
-  private static generatePubspecYaml(plan: AgentPlan): AgentFileArtifact {
+  private static generatePubspecYaml(plan: AgentPlan, usesSupabase = true): AgentFileArtifact {
     const isRiverpod = plan.stateManagement === 'riverpod';
     const stateDep = isRiverpod ? '  flutter_riverpod: ^2.5.1' : '  provider: ^6.1.2';
     // Unique per app: falls back to a sanitized app name for legacy plans.
     const packageName =
       plan.appId || plan.appName.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    const supabaseDep = usesSupabase ? '\n  supabase_flutter: ^2.8.0' : '';
     const content = `name: ${packageName}
 description: A production-grade Flutter application generated by FlutterForge Lovable Agent.
 publish_to: 'none'
@@ -200,8 +406,7 @@ environment:
 
 dependencies:
   flutter:
-    sdk: flutter
-  supabase_flutter: ^2.8.0
+    sdk: flutter${supabaseDep}
   go_router: ^14.6.2
   google_fonts: ^6.2.1
 ${stateDep}
@@ -283,103 +488,252 @@ linter:
   }
 
   private static generateAppTheme(plan: AgentPlan): AgentFileArtifact {
-    const pColor = plan.theme.primaryColor.replace('#', '');
-    const sColor = plan.theme.secondaryColor.replace('#', '');
-    // Brand-matched page backgrounds (plan-driven): cream in light mode,
-    // deep-sea in dark mode. Falls back to legacy neutrals on bad input.
-    const bgLight = /^([0-9A-Fa-f]{6})$/.test(plan.theme.backgroundColor.replace('#', ''))
-      && !plan.theme.isDarkPreferred
-      ? plan.theme.backgroundColor.replace('#', '')
-      : 'F8FAFC';
-    const bgDark = plan.theme.isDarkPreferred && /^([0-9A-Fa-f]{6})$/.test(plan.theme.backgroundColor.replace('#', ''))
-      ? plan.theme.backgroundColor.replace('#', '')
-      : '0F172A';
+    const design = plan.design
+      ?? AgentPlanner.planDesign(plan.appDescription || plan.appName, plan.domain || 'general');
+
+    const primary = dartHex(design.palette.primary, '02AFB9');
+    const secondary = dartHex(design.palette.secondary, 'F07067');
+    const accent = dartHex(design.palette.accent, 'FACC15');
+    const backgroundLight = dartHex(design.palette.background, 'FBFADD');
+    const surfaceLight = dartHex(design.palette.surface, 'FFFFFF');
+    const inkLight = dartHex(design.palette.ink, '0B3542');
+    const mutedLight = dartHex(design.palette.muted, '5A7178');
+    const backgroundDark = dartHex(design.palette.backgroundDark, '0A3542');
+    const surfaceDark = dartHex(design.palette.surfaceDark, '124551');
+    const inkDark = dartHex(design.palette.inkDark, 'F2FAFB');
+
+    const displayFont = dartFont(design.typography.display, 'Sora');
+    const bodyFont = dartFont(design.typography.body, 'Inter');
+    const displayWeight = dartWeight(design.typography.displayWeight, 700);
+    const bodyWeight = dartWeight(design.typography.bodyWeight, 400);
+    const curve = dartCurve(design.motion.curve);
+
+    const spacingValues = [...new Set(
+      [design.spacing.unit, ...design.spacing.scale]
+        .map((n) => Math.round(Number(n)))
+        .filter((n) => Number.isFinite(n) && n > 0),
+    )].sort((a, b) => a - b);
+    const spacingTokens = spacingValues
+      .map((n) => `  static const double space${n} = ${n};`)
+      .join('\n');
+    const pageGutter = spacingValues.find((n) => n >= 16) ?? 16;
+
+    const radiusSm = Math.max(0, Math.round(design.radius.sm));
+    const radiusMd = Math.max(radiusSm, Math.round(design.radius.md));
+    const radiusLg = Math.max(radiusMd, Math.round(design.radius.lg));
+    const radiusPill = Math.max(radiusLg, Math.round(design.radius.pill));
+
+    const fastMs = Math.max(50, Math.round(design.motion.fastMs));
+    const baseMs = Math.max(fastMs, Math.round(design.motion.baseMs));
+    const slowMs = Math.max(baseMs, Math.round(design.motion.slowMs));
 
     const content = `import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-class AppTheme {
-  static const Color primary = Color(0xFF${pColor});
-  static const Color secondary = Color(0xFF${sColor});
-  static const Color backgroundLight = Color(0xFF${bgLight});
-  static const Color surfaceLight = Colors.white;
-  static const Color textPrimaryLight = Color(0xFF0B3542);
-  static const Color textSecondaryLight = Color(0xFF476771);
+/// Design tokens committed before any screen was written.
+/// Screens consume these instead of inventing colors, spacing, radii,
+/// type sizes or durations per widget.
+abstract class AppTokens {
+  // Spacing scale (${design.spacing.unit}pt base)
+${spacingTokens}
 
-  static const Color backgroundDark = Color(0xFF${bgDark});
-  static const Color surfaceDark = Color(0xFF1E293B);
-  static const Color textPrimaryDark = Color(0xFFF8FAFC);
-  static const Color textSecondaryDark = Color(0xFF94A3B8);
+  static const double pageGutter = ${pageGutter};
+
+  static const double radiusSm = ${radiusSm};
+  static const double radiusMd = ${radiusMd};
+  static const double radiusLg = ${radiusLg};
+  static const double radiusPill = ${radiusPill};
+
+  static const Duration motionFast = Duration(milliseconds: ${fastMs});
+  static const Duration motionBase = Duration(milliseconds: ${baseMs});
+  static const Duration motionSlow = Duration(milliseconds: ${slowMs});
+  static const Curve curve = Curves.${curve};
+}
+
+class AppTheme {
+  static const Color primary = Color(0xFF${primary});
+  static const Color secondary = Color(0xFF${secondary});
+  static const Color accent = Color(0xFF${accent});
+
+  static const Color backgroundLight = Color(0xFF${backgroundLight});
+  static const Color surfaceLight = Color(0xFF${surfaceLight});
+  static const Color textPrimaryLight = Color(0xFF${inkLight});
+  static const Color textSecondaryLight = Color(0xFF${mutedLight});
+
+  static const Color backgroundDark = Color(0xFF${backgroundDark});
+  static const Color surfaceDark = Color(0xFF${surfaceDark});
+  static const Color textPrimaryDark = Color(0xFF${inkDark});
+  static const Color textSecondaryDark = Color(0xFF${inkDark});
+
+  static final Color borderLight = textSecondaryLight.withOpacity(0.16);
+  static final Color borderDark = textSecondaryDark.withOpacity(0.18);
+
+  /// Display face for headings and titles, body face for prose.
+  /// Both come from the approved design brief, not per-screen guesses.
+  static TextTheme _textTheme(TextTheme base) {
+    final display = GoogleFonts.getTextTheme('${displayFont}', base);
+    final body = GoogleFonts.getTextTheme('${bodyFont}', base);
+    return body.copyWith(
+      displayLarge: display.displayLarge?.copyWith(
+        fontWeight: FontWeight.w${displayWeight}, letterSpacing: -0.6, height: 1.05),
+      displayMedium: display.displayMedium?.copyWith(
+        fontWeight: FontWeight.w${displayWeight}, letterSpacing: -0.4, height: 1.1),
+      displaySmall: display.displaySmall?.copyWith(
+        fontWeight: FontWeight.w${displayWeight}, letterSpacing: -0.3, height: 1.15),
+      headlineLarge: display.headlineLarge?.copyWith(
+        fontWeight: FontWeight.w${displayWeight}, letterSpacing: -0.2),
+      headlineMedium: display.headlineMedium?.copyWith(fontWeight: FontWeight.w${displayWeight}),
+      headlineSmall: display.headlineSmall?.copyWith(fontWeight: FontWeight.w${displayWeight}),
+      titleLarge: display.titleLarge?.copyWith(fontWeight: FontWeight.w${displayWeight}),
+      bodyLarge: body.bodyLarge?.copyWith(fontWeight: FontWeight.w${bodyWeight}, height: 1.5),
+      bodyMedium: body.bodyMedium?.copyWith(fontWeight: FontWeight.w${bodyWeight}, height: 1.5),
+      bodySmall: body.bodySmall?.copyWith(fontWeight: FontWeight.w${bodyWeight}, height: 1.45),
+      labelLarge: body.labelLarge?.copyWith(
+        fontWeight: FontWeight.w600, letterSpacing: 0.2),
+    );
+  }
 
   static ThemeData get lightTheme {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: primary,
+      secondary: secondary,
+      tertiary: accent,
+      brightness: Brightness.light,
+      surface: surfaceLight,
+    ).copyWith(surface: surfaceLight, onSurface: textPrimaryLight);
+
     final base = ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: primary,
-        secondary: secondary,
-        brightness: Brightness.light,
-        surface: surfaceLight,
-      ),
+      colorScheme: scheme,
       scaffoldBackgroundColor: backgroundLight,
     );
 
     return base.copyWith(
-      textTheme: GoogleFonts.interTextTheme(base.textTheme),
-      appBarTheme: const AppBarTheme(
+      textTheme: _textTheme(base.textTheme),
+      appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: false,
-        iconTheme: IconThemeData(color: textPrimaryLight),
-        titleTextStyle: TextStyle(
-          color: textPrimaryLight,
-          fontSize: 20,
-          fontWeight: FontWeight.w700,
-        ),
+        foregroundColor: textPrimaryLight,
       ),
       cardTheme: CardThemeData(
         color: surfaceLight,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
+        margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: Color(0xFFE2E8F0)),
+          borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+          side: BorderSide(color: borderLight),
+        ),
+      ),
+      dividerTheme: DividerThemeData(color: borderLight, thickness: 1),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: scheme.primary,
+          foregroundColor: scheme.onPrimary,
+          minimumSize: const Size(48, 48),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          ),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: surfaceLight,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        hintStyle: TextStyle(color: textSecondaryLight),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: BorderSide(color: borderLight),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: BorderSide(color: borderLight),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: BorderSide(color: primary, width: 1.5),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: BorderSide(color: scheme.error),
         ),
       ),
     );
   }
 
   static ThemeData get darkTheme {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: primary,
+      secondary: secondary,
+      tertiary: accent,
+      brightness: Brightness.dark,
+      surface: surfaceDark,
+    ).copyWith(surface: surfaceDark, onSurface: textPrimaryDark);
+
     final base = ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: primary,
-        secondary: secondary,
-        brightness: Brightness.dark,
-        surface: surfaceDark,
-      ),
+      colorScheme: scheme,
       scaffoldBackgroundColor: backgroundDark,
     );
 
     return base.copyWith(
-      textTheme: GoogleFonts.interTextTheme(base.textTheme),
-      appBarTheme: const AppBarTheme(
+      textTheme: _textTheme(base.textTheme),
+      appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: false,
-        iconTheme: IconThemeData(color: textPrimaryDark),
-        titleTextStyle: TextStyle(
-          color: textPrimaryDark,
-          fontSize: 20,
-          fontWeight: FontWeight.w700,
-        ),
+        foregroundColor: textPrimaryDark,
       ),
       cardTheme: CardThemeData(
         color: surfaceDark,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
+        margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: Color(0xFF334155)),
+          borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+          side: BorderSide(color: borderDark),
+        ),
+      ),
+      dividerTheme: DividerThemeData(color: borderDark, thickness: 1),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: scheme.primary,
+          foregroundColor: scheme.onPrimary,
+          minimumSize: const Size(48, 48),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          ),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: surfaceDark,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        hintStyle: TextStyle(color: textSecondaryDark),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: BorderSide(color: borderDark),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: BorderSide(color: borderDark),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: BorderSide(color: primary, width: 1.5),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+          borderSide: BorderSide(color: scheme.error),
         ),
       ),
     );
@@ -390,7 +744,7 @@ class AppTheme {
       path: 'lib/core/theme/app_theme.dart',
       content,
       language: 'dart',
-      description: 'Material 3 design theme with Google Fonts typography',
+      description: 'Material 3 design system with brief-driven palette, type scale, spacing and motion tokens',
       isNew: true,
     };
   }
@@ -505,12 +859,35 @@ class ThemeToggleButton extends StatelessWidget {
     };
   }
 
-  private static generateAppRouter(plan: AgentPlan): AgentFileArtifact {
+  private static generateAppRouter(plan: AgentPlan, usesSupabase = true): AgentFileArtifact {
     const imports: string[] = [];
     const routes: string[] = [];
 
+    const KNOWN_SCREEN_PATHS: Record<string, string> = {
+      users: '../../screens/users/user_management_screen.dart',
+      audit: '../../screens/audit/audit_logs_screen.dart',
+      health: '../../screens/health/health_monitor_screen.dart',
+      analytics: '../../screens/analytics/analytics_screen.dart',
+      splash: '../../screens/splash/splash_screen.dart',
+      auth: '../../screens/auth/auth_screen.dart',
+      home: '../../screens/home/home_screen.dart',
+      profile: '../../screens/profile/profile_screen.dart',
+      detail: '../../screens/detail/detail_screen.dart',
+      cart: '../../screens/cart/cart_screen.dart',
+      UserManagementScreen: '../../screens/users/user_management_screen.dart',
+      AuditLogsScreen: '../../screens/audit/audit_logs_screen.dart',
+      HealthMonitorScreen: '../../screens/health/health_monitor_screen.dart',
+      AnalyticsScreen: '../../screens/analytics/analytics_screen.dart',
+    };
+
     for (const s of plan.screens) {
-      imports.push(`import '../../screens/${s.name.replace('Screen', '').toLowerCase()}/${this.toSnakeCase(s.name)}.dart';`);
+      const known = KNOWN_SCREEN_PATHS[s.routeName] || KNOWN_SCREEN_PATHS[s.name];
+      const importPath = known
+        ? known
+        : s.filePath
+        ? s.filePath.replace(/^lib\//, '../../')
+        : `../../screens/${this.toSnakeCase(s.name.replace('Screen', ''))}/${this.toSnakeCase(s.name)}.dart`;
+      imports.push(`import '${importPath}';`);
       // DetailScreen takes the route id param — every other screen is const.
       const builder = s.routeName === 'detail'
         ? `(context, state) => DetailScreen(itemId: state.pathParameters['id'],)`
@@ -522,13 +899,16 @@ class ThemeToggleButton extends StatelessWidget {
       ),`);
     }
 
+    const hasSplash = plan.screens.some((s) => s.routeName === 'splash');
+    const initialLocation = (usesSupabase && hasSplash) ? '/splash' : '/';
+
     const content = `import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 ${imports.join('\n')}
 
 class AppRouter {
   static final router = GoRouter(
-    initialLocation: '/splash',
+    initialLocation: '${initialLocation}',
     routes: [
 ${routes.join('\n')}
     ],
@@ -1080,7 +1460,7 @@ class ${service.name} {
     };
   }
 
-  private static generateAppProvider(plan: AgentPlan): AgentFileArtifact {
+  private static generateAppProvider(plan: AgentPlan, usesSupabase = true): AgentFileArtifact {
     const mainModel = plan.models.find((m) => m.name !== 'UserProfile') || plan.models[0];
     const modelName = mainModel?.name || 'Item';
     const modelSnake = this.toSnakeCase(modelName);
@@ -1090,10 +1470,12 @@ class ${service.name} {
       return this.generateRiverpodProvider(modelName, modelSnake, serviceName);
     }
 
+    const supabaseImport = usesSupabase ? "\nimport '../services/supabase_service.dart';" : '';
+    const authGetter = usesSupabase ? 'SupabaseService.isAuthenticated' : 'true';
+
     const content = `import 'package:flutter/material.dart';
 import '../models/${modelSnake}.dart';
-import '../services/${this.toSnakeCase(serviceName)}.dart';
-import '../services/supabase_service.dart';
+import '../services/${this.toSnakeCase(serviceName)}.dart';${supabaseImport}
 
 class AppProvider extends ChangeNotifier {
   final ${serviceName} _service = ${serviceName}();
@@ -1105,7 +1487,7 @@ class AppProvider extends ChangeNotifier {
   List<${modelName}> get items => _items;
   bool get isLoading => _isLoading;
   String? get error => _error;
-  bool get isAuthenticated => SupabaseService.isAuthenticated;
+  bool get isAuthenticated => ${authGetter};
 
   AppProvider() {
     loadItems();
@@ -1142,10 +1524,37 @@ class AppProvider extends ChangeNotifier {
   Future<void> deleteItem(String id) async {
     try {
       await _service.delete(id);
-      _items.removeWhere((item) => item.id == id);
+      _items.removeWhere((item) => (item as dynamic).id == id);
       notifyListeners();
     } catch (e) {
       _error = e.toString();
+      notifyListeners();
+    }
+  }
+
+  Future<void> updateItem(String id, ${modelName} updated) async {
+    try {
+      await _service.update(id, updated);
+      final idx = _items.indexWhere((item) => (item as dynamic).id == id);
+      if (idx != -1) {
+        _items[idx] = updated;
+        notifyListeners();
+      }
+    } catch (e) {
+      _error = e.toString();
+      notifyListeners();
+    }
+  }
+
+  Future<void> search(String query) async {
+    _isLoading = true;
+    notifyListeners();
+    try {
+      _items = await _service.search(query);
+    } catch (e) {
+      _error = e.toString();
+    } finally {
+      _isLoading = false;
       notifyListeners();
     }
   }
@@ -1251,7 +1660,7 @@ final appProvider = StateNotifierProvider<AppNotifier, AppState>((ref) {
     };
   }
 
-  private static generateScreenFile(screen: ScreenPlan, plan: AgentPlan): AgentFileArtifact {
+  private static generateScreenFile(screen: ScreenPlan, plan: AgentPlan, usesSupabase = true): AgentFileArtifact {
     if (screen.routeName === 'splash') {
       return this.generateSplashScreen();
     }
@@ -1259,16 +1668,28 @@ final appProvider = StateNotifierProvider<AppNotifier, AppState>((ref) {
       return this.generateAuthScreen();
     }
     if (screen.routeName === 'home') {
-      return this.generateHomeScreen(plan);
+      return this.generateHomeScreen(plan, usesSupabase);
     }
     if (screen.routeName === 'profile') {
-      return this.generateProfileScreen();
+      return this.generateProfileScreen(usesSupabase);
     }
     if (screen.routeName === 'detail') {
       return this.generateDetailScreen(plan);
     }
     if (screen.routeName === 'cart') {
       return this.generateCartScreen(plan);
+    }
+    if (screen.routeName === 'users') {
+      return this.generateUserManagementScreen(plan);
+    }
+    if (screen.routeName === 'audit') {
+      return this.generateAuditLogsScreen(plan);
+    }
+    if (screen.routeName === 'health') {
+      return this.generateHealthMonitorScreen(plan);
+    }
+    if (screen.routeName === 'analytics') {
+      return this.generateAnalyticsScreen(plan);
     }
 
     // Default screen template
@@ -1300,6 +1721,1299 @@ class ${screen.name} extends StatelessWidget {
       content,
       language: 'dart',
       description: `${screen.name} UI Screen`,
+      isNew: true,
+    };
+  }
+
+  private static generateUserManagementScreen(plan: AgentPlan): AgentFileArtifact {
+    const content = `import 'package:flutter/material.dart';
+
+class UserManagementScreen extends StatefulWidget {
+  const UserManagementScreen({super.key});
+
+  @override
+  State<UserManagementScreen> createState() => _UserManagementScreenState();
+}
+
+class _UserManagementScreenState extends State<UserManagementScreen> {
+  final List<Map<String, String>> _users = [
+    {'id': '1', 'name': 'Alex Mercer', 'email': 'alex@admin.co', 'role': 'Admin', 'status': 'Active'},
+    {'id': '2', 'name': 'Sarah Connor', 'email': 'sarah@admin.co', 'role': 'Editor', 'status': 'Active'},
+    {'id': '3', 'name': 'Marcus Vance', 'email': 'marcus@admin.co', 'role': 'Viewer', 'status': 'Active'},
+    {'id': '4', 'name': 'Elena Rostova', 'email': 'elena@admin.co', 'role': 'Editor', 'status': 'Inactive'},
+    {'id': '5', 'name': 'David Chen', 'email': 'david@admin.co', 'role': 'Viewer', 'status': 'Active'},
+    {'id': '6', 'name': 'James Wilson', 'email': 'james@admin.co', 'role': 'Admin', 'status': 'Active'},
+  ];
+
+  String _filter = 'All';
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Color _getRoleColor(String role) {
+    switch (role) {
+      case 'Admin':
+        return Colors.indigo;
+      case 'Editor':
+        return Colors.amber.shade800;
+      case 'Viewer':
+      default:
+        return Colors.teal;
+    }
+  }
+
+  void _cycleRole(int index) {
+    final currentRole = _users[index]['role'] ?? 'Viewer';
+    final nextRole = currentRole == 'Admin'
+        ? 'Editor'
+        : (currentRole == 'Editor' ? 'Viewer' : 'Admin');
+    setState(() {
+      _users[index]['role'] = nextRole;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('\${_users[index]['name']} promoted to \$nextRole'),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  void _deleteUser(int index) {
+    final removed = _users[index];
+    setState(() {
+      _users.removeAt(index);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('\${removed['name']} removed'),
+        action: SnackBarAction(
+          label: 'UNDO',
+          onPressed: () {
+            setState(() {
+              _users.insert(index, removed);
+            });
+          },
+        ),
+      ),
+    );
+  }
+
+  void _showAddUserDialog() {
+    final nameCtrl = TextEditingController();
+    final emailCtrl = TextEditingController();
+    String selectedRole = 'Viewer';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.person_add_outlined, color: Colors.indigo),
+              SizedBox(width: 10),
+              Text('Add New Team Member'),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Full Name',
+                    hintText: 'e.g. Jane Doe',
+                    prefixIcon: Icon(Icons.badge_outlined),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: emailCtrl,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    labelText: 'Email Address',
+                    hintText: 'e.g. jane@company.com',
+                    prefixIcon: Icon(Icons.email_outlined),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  value: selectedRole,
+                  decoration: const InputDecoration(
+                    labelText: 'Role Permission',
+                    prefixIcon: Icon(Icons.security_outlined),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'Admin', child: Text('Admin (Full Access)')),
+                    DropdownMenuItem(value: 'Editor', child: Text('Editor (Manage Data)')),
+                    DropdownMenuItem(value: 'Viewer', child: Text('Viewer (Read Only)')),
+                  ],
+                  onChanged: (v) => setDialogState(() => selectedRole = v ?? 'Viewer'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final name = nameCtrl.text.trim();
+                final email = emailCtrl.text.trim();
+                if (name.isEmpty || email.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Please fill out all fields.')),
+                  );
+                  return;
+                }
+                setState(() {
+                  _users.insert(0, {
+                    'id': DateTime.now().millisecondsSinceEpoch.toString(),
+                    'name': name,
+                    'email': email,
+                    'role': selectedRole,
+                    'status': 'Active',
+                  });
+                });
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('User \$name added successfully!'),
+                    backgroundColor: Colors.green.shade700,
+                  ),
+                );
+              },
+              child: const Text('Add Member'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _users.where((u) {
+      final matchesRole = _filter == 'All' || u['role'] == _filter;
+      final q = _searchQuery.toLowerCase();
+      final matchesSearch = q.isEmpty ||
+          (u['name']?.toLowerCase().contains(q) == true) ||
+          (u['email']?.toLowerCase().contains(q) == true);
+      return matchesRole && matchesSearch;
+    }).toList();
+
+    final adminCount = _users.where((u) => u['role'] == 'Admin').length;
+    final editorCount = _users.where((u) => u['role'] == 'Editor').length;
+    final viewerCount = _users.where((u) => u['role'] == 'Viewer').length;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('User Management'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.person_add_alt_1),
+            tooltip: 'Add User',
+            onPressed: _showAddUserDialog,
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // KPI Counter Strip
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Row(
+              children: [
+                _buildStatPill('Total', '\${_users.length}', Colors.grey.shade800),
+                const SizedBox(width: 8),
+                _buildStatPill('Admins', '\$adminCount', Colors.indigo),
+                const SizedBox(width: 8),
+                _buildStatPill('Editors', '\$editorCount', Colors.amber.shade800),
+                const SizedBox(width: 8),
+                _buildStatPill('Viewers', '\$viewerCount', Colors.teal),
+              ],
+            ),
+          ),
+
+          // Search and Role Filter Bar
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    onChanged: (val) => setState(() => _searchQuery = val),
+                    decoration: InputDecoration(
+                      hintText: 'Search by name or email...',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 18),
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() => _searchQuery = '');
+                              },
+                            )
+                          : null,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.Border.all(color: Theme.of(context).dividerColor),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _filter,
+                      items: ['All', 'Admin', 'Editor', 'Viewer']
+                          .map((r) => DropdownMenuItem(value: r, child: Text(r)))
+                          .toList(),
+                      onChanged: (v) => setState(() => _filter = v ?? 'All'),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // User Cards List
+          Expanded(
+            child: filtered.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.person_search_outlined, size: 48, color: Colors.grey.shade400),
+                        const SizedBox(height: 12),
+                        const Text('No members found', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Try modifying your search or filter criteria.',
+                          style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+                        ),
+                        const SizedBox(height: 16),
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() {
+                              _searchQuery = '';
+                              _filter = 'All';
+                            });
+                          },
+                          icon: const Icon(Icons.restart_alt, size: 16),
+                          label: const Text('Reset Filters'),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    itemCount: filtered.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, i) {
+                      final user = filtered[i];
+                      final role = user['role'] ?? 'Viewer';
+                      final roleColor = _getRoleColor(role);
+                      final originalIndex = _users.indexOf(user);
+
+                      return Card(
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          side: BorderSide(color: Theme.of(context).dividerColor.withOpacity(0.4)),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          child: Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 20,
+                                backgroundColor: roleColor.withOpacity(0.15),
+                                child: Text(
+                                  (user['name'] ?? 'U')[0].toUpperCase(),
+                                  style: TextStyle(color: roleColor, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      user['name'] ?? '',
+                                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      user['email'] ?? '',
+                                      style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              // Role Badge with Tap to promote
+                              InkWell(
+                                onTap: () => _cycleRole(originalIndex),
+                                borderRadius: BorderRadius.circular(12),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: roleColor.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: roleColor.withOpacity(0.4)),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        role,
+                                        style: TextStyle(color: roleColor, fontSize: 11, fontWeight: FontWeight.bold),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Icon(Icons.sync_alt, size: 12, color: roleColor),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                icon: Icon(Icons.delete_outline, size: 20, color: Colors.red.shade300),
+                                tooltip: 'Delete User',
+                                onPressed: () => _deleteUser(originalIndex),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatPill(String label, String count, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Column(
+          children: [
+            Text(count, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: color)),
+            const SizedBox(height: 2),
+            Text(label, style: TextStyle(fontSize: 10, color: color)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+`;
+    return {
+      path: 'lib/screens/users/user_management_screen.dart',
+      content,
+      language: 'dart',
+      description: 'Fully interactive User Management Screen with live search, roles, and add/delete actions',
+      isNew: true,
+    };
+  }
+
+  private static generateAuditLogsScreen(plan: AgentPlan): AgentFileArtifact {
+    const content = `import 'package:flutter/material.dart';
+
+class AuditLogsScreen extends StatefulWidget {
+  const AuditLogsScreen({super.key});
+
+  @override
+  State<AuditLogsScreen> createState() => _AuditLogsScreenState();
+}
+
+class _AuditLogsScreenState extends State<AuditLogsScreen> {
+  final List<Map<String, String>> _logs = [
+    {
+      'id': 'LOG-9402',
+      'action': 'USER_ROLE_PROMOTED',
+      'user': 'alex@admin.co',
+      'target': 'marcus@admin.co -> Editor',
+      'time': 'Just now',
+      'status': 'success',
+      'ip': '192.168.1.42',
+    },
+    {
+      'id': 'LOG-9401',
+      'action': 'SYSTEM_BACKUP_COMPLETED',
+      'user': 'cron_backup_worker',
+      'target': 's3://backups/snapshot_prod.tar',
+      'time': '12 mins ago',
+      'status': 'success',
+      'ip': '10.0.0.1',
+    },
+    {
+      'id': 'LOG-9400',
+      'action': 'API_KEY_ROTATED',
+      'user': 'alex@admin.co',
+      'target': 'Telemetry API Key #3',
+      'time': '45 mins ago',
+      'status': 'success',
+      'ip': '192.168.1.42',
+    },
+    {
+      'id': 'LOG-9399',
+      'action': 'FAILED_LOGIN_ATTEMPT',
+      'user': 'unknown_actor',
+      'target': '192.168.1.104 (5 failed tries)',
+      'time': '2 hours ago',
+      'status': 'warning',
+      'ip': '192.168.1.104',
+    },
+    {
+      'id': 'LOG-9398',
+      'action': 'RATE_LIMIT_TRIGGERED',
+      'user': 'gateway_rate_limiter',
+      'target': 'Client IP 203.0.113.88 exceeded 1000 req/min',
+      'time': '3 hours ago',
+      'status': 'warning',
+      'ip': '203.0.113.88',
+    },
+    {
+      'id': 'LOG-9397',
+      'action': 'SCHEMA_MIGRATION_DEPLOYED',
+      'user': 'ci_pipeline',
+      'target': '002_add_audit_indexes.sql',
+      'time': '5 hours ago',
+      'status': 'success',
+      'ip': '10.0.4.12',
+    },
+    {
+      'id': 'LOG-9396',
+      'action': 'DATABASE_FAILOVER_TEST',
+      'user': 'devops_lead',
+      'target': 'Primary Replica Switch (0 downtime)',
+      'time': '1 day ago',
+      'status': 'success',
+      'ip': '192.168.2.15',
+    },
+  ];
+
+  String _selectedSeverity = 'All';
+  String _searchQuery = '';
+
+  void _simulateNewEvent() {
+    final actions = [
+      {'action': 'ACCESS_TOKEN_REFRESHED', 'user': 'sarah@admin.co', 'target': 'Auth Session #88', 'status': 'success'},
+      {'action': 'CACHE_INVALIDATED', 'user': 'system_cache', 'target': 'Redis Cache Cluster A', 'status': 'success'},
+      {'action': 'UNUSUAL_GEO_LOGIN', 'user': 'elena@admin.co', 'target': 'Login from Madrid, Spain', 'status': 'warning'},
+      {'action': 'EXPORT_JOB_REQUESTED', 'user': 'james@admin.co', 'target': 'Analytics CSV Export', 'status': 'success'},
+    ];
+    final selected = (actions..shuffle()).first;
+    final newId = 'LOG-\${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}';
+
+    setState(() {
+      _logs.insert(0, {
+        'id': newId,
+        'action': selected['action']!,
+        'user': selected['user']!,
+        'target': selected['target']!,
+        'time': 'Just now',
+        'status': selected['status']!,
+        'ip': '192.168.1.\${DateTime.now().second}',
+      });
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Simulated event: \${selected['action']}'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _showEventDetail(Map<String, String> log) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Icon(
+              log['status'] == 'warning' ? Icons.warning_amber_rounded : Icons.check_circle_outline,
+              color: log['status'] == 'warning' ? Colors.orange : Colors.green,
+            ),
+            const SizedBox(width: 10),
+            Text(log['id'] ?? 'Audit Record'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildDetailRow('Action Type', log['action'] ?? ''),
+            _buildDetailRow('Initiator', log['user'] ?? ''),
+            _buildDetailRow('Target', log['target'] ?? ''),
+            _buildDetailRow('Timestamp', log['time'] ?? ''),
+            _buildDetailRow('Origin IP', log['ip'] ?? ''),
+            _buildDetailRow('Status', (log['status'] ?? '').toUpperCase()),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _logs.where((l) {
+      final matchesSeverity = _selectedSeverity == 'All' ||
+          l['status']?.toLowerCase() == _selectedSeverity.toLowerCase();
+      final q = _searchQuery.toLowerCase();
+      final matchesSearch = q.isEmpty ||
+          (l['action']?.toLowerCase().contains(q) == true) ||
+          (l['user']?.toLowerCase().contains(q) == true) ||
+          (l['target']?.toLowerCase().contains(q) == true);
+      return matchesSeverity && matchesSearch;
+    }).toList();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Audit Logs'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.file_download_outlined),
+            tooltip: 'Export CSV',
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Exported \${_logs.length} audit records to CSV.')),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.add_alert_outlined),
+            tooltip: 'Simulate Event',
+            onPressed: _simulateNewEvent,
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Filter Chips Row
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Row(
+              children: [
+                _buildSeverityChip('All', _logs.length),
+                const SizedBox(width: 8),
+                _buildSeverityChip('Success', _logs.where((l) => l['status'] == 'success').length),
+                const SizedBox(width: 8),
+                _buildSeverityChip('Warning', _logs.where((l) => l['status'] == 'warning').length),
+              ],
+            ),
+          ),
+
+          // Search Field
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: TextField(
+              onChanged: (v) => setState(() => _searchQuery = v),
+              decoration: InputDecoration(
+                hintText: 'Search audit records...',
+                prefixIcon: const Icon(Icons.search, size: 20),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              ),
+            ),
+          ),
+
+          // Log list
+          Expanded(
+            child: ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: filtered.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, i) {
+                final l = filtered[i];
+                final isWarning = l['status'] == 'warning';
+                final statusColor = isWarning ? Colors.orange : Colors.green;
+
+                return Card(
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    side: BorderSide(color: Theme.of(context).dividerColor.withOpacity(0.3)),
+                  ),
+                  child: ListTile(
+                    onTap: () => _showEventDetail(l),
+                    leading: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: statusColor.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        isWarning ? Icons.warning_amber_rounded : Icons.check_circle_outline,
+                        color: statusColor,
+                        size: 20,
+                      ),
+                    ),
+                    title: Text(
+                      l['action'] ?? '',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, fontFamily: 'monospace'),
+                    ),
+                    subtitle: Text(
+                      '\${l['user']} • \${l['target']}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    trailing: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(l['time'] ?? '', style: TextStyle(color: Colors.grey.shade500, fontSize: 11)),
+                        const SizedBox(height: 4),
+                        const Icon(Icons.chevron_right, size: 16, color: Colors.grey),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _simulateNewEvent,
+        icon: const Icon(Icons.bolt),
+        label: const Text('Simulate Event'),
+      ),
+    );
+  }
+
+  Widget _buildSeverityChip(String label, int count) {
+    final isSelected = _selectedSeverity == label;
+    return ChoiceChip(
+      label: Text('\$label (\$count)'),
+      selected: isSelected,
+      onSelected: (_) => setState(() => _selectedSeverity = label),
+    );
+  }
+}
+`;
+    return {
+      path: 'lib/screens/audit/audit_logs_screen.dart',
+      content,
+      language: 'dart',
+      description: 'Fully interactive Audit Logs Screen with live simulation, search, and detail modal',
+      isNew: true,
+    };
+  }
+
+  private static generateHealthMonitorScreen(plan: AgentPlan): AgentFileArtifact {
+    const content = `import 'dart:async';
+import 'dart:math';
+import 'package:flutter/material.dart';
+
+class HealthMonitorScreen extends StatefulWidget {
+  const HealthMonitorScreen({super.key});
+
+  @override
+  State<HealthMonitorScreen> createState() => _HealthMonitorScreenState();
+}
+
+class _HealthMonitorScreenState extends State<HealthMonitorScreen> {
+  Timer? _ticker;
+  final Random _rng = Random();
+
+  double _cpuLoad = 28.0;
+  double _memoryGb = 1.6;
+  int _apiLatencyMs = 38;
+  int _uptimeSeconds = 1234560;
+  bool _isStressTestActive = false;
+
+  final List<Map<String, dynamic>> _nodes = [
+    {'name': 'Primary API Gateway', 'status': 'Operational', 'isHealthy': true},
+    {'name': 'Web Application Server', 'status': 'Operational', 'isHealthy': true},
+    {'name': 'Background Event Worker', 'status': 'Operational', 'isHealthy': true},
+    {'name': 'Local Storage Engine', 'status': 'Operational', 'isHealthy': true},
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (!mounted) return;
+      setState(() {
+        _uptimeSeconds += 2;
+        if (!_isStressTestActive) {
+          _cpuLoad = (_cpuLoad + (_rng.nextDouble() * 6 - 3)).clamp(16.0, 72.0);
+          _memoryGb = (_memoryGb + (_rng.nextDouble() * 0.1 - 0.05)).clamp(1.2, 3.2);
+          _apiLatencyMs = (_apiLatencyMs + (_rng.nextInt(7) - 3)).clamp(22, 65);
+        }
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  void _triggerLoadSpike() {
+    setState(() {
+      _isStressTestActive = true;
+      _cpuLoad = 89.4;
+      _memoryGb = 3.65;
+      _apiLatencyMs = 210;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Simulating high traffic load for 5 seconds...'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+
+    Future.delayed(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      setState(() {
+        _isStressTestActive = false;
+        _cpuLoad = 32.0;
+        _memoryGb = 1.7;
+        _apiLatencyMs = 36;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cluster load stabilized. Telemetry optimal.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    });
+  }
+
+  String _formatUptime(int totalSeconds) {
+    final days = totalSeconds ~/ 86400;
+    final hours = (totalSeconds % 86400) ~/ 3600;
+    final mins = (totalSeconds % 3600) ~/ 60;
+    final secs = totalSeconds % 60;
+    return '\${days}d \${hours}h \${mins}m \${secs}s';
+  }
+
+  Color _getMetricColor(double ratio) {
+    if (ratio < 0.6) return Colors.green;
+    if (ratio < 0.8) return Colors.orange;
+    return Colors.red;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cpuRatio = _cpuLoad / 100.0;
+    final memRatio = _memoryGb / 4.0;
+    final latencyRatio = (_apiLatencyMs / 200.0).clamp(0.0, 1.0);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('System Health Monitor'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.flash_on_outlined),
+            tooltip: 'Simulate Traffic Spike',
+            onPressed: _triggerLoadSpike,
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Live Status Header Banner
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: (_isStressTestActive ? Colors.orange : Colors.green).withOpacity(0.12),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: (_isStressTestActive ? Colors.orange : Colors.green).withOpacity(0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _isStressTestActive ? Icons.warning_amber_rounded : Icons.check_circle,
+                    color: _isStressTestActive ? Colors.orange : Colors.green,
+                    size: 28,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _isStressTestActive ? 'High Traffic Stress In Progress' : 'All Systems Fully Operational',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: _isStressTestActive ? Colors.orange.shade800 : Colors.green.shade800,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Live telemetry refreshed every 2 seconds.',
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // Telemetry Gauges Grid
+            Row(
+              children: [
+                _buildGaugeCard(
+                  'CPU Load',
+                  '\${_cpuLoad.toStringAsFixed(1)}%',
+                  cpuRatio,
+                  _getMetricColor(cpuRatio),
+                  Icons.memory,
+                ),
+                const SizedBox(width: 12),
+                _buildGaugeCard(
+                  'Memory Usage',
+                  '\${_memoryGb.toStringAsFixed(2)} / 4.0 GB',
+                  memRatio,
+                  _getMetricColor(memRatio),
+                  Icons.storage,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _buildGaugeCard(
+                  'API Latency',
+                  '\$_apiLatencyMs ms',
+                  latencyRatio,
+                  _getMetricColor(latencyRatio),
+                  Icons.speed,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Card(
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(color: Theme.of(context).dividerColor.withOpacity(0.3)),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.timer_outlined, size: 16, color: Colors.purple.shade400),
+                              const SizedBox(width: 6),
+                              Text('System Uptime', style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            _formatUptime(_uptimeSeconds),
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text('SLA 99.98% guaranteed', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 24),
+
+            // Service Nodes Section
+            const Text('Infrastructure Nodes', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            ..._nodes.map((node) => _buildServiceRow(node)),
+
+            const SizedBox(height: 16),
+
+            // Diagnostics Button
+            Center(
+              child: ElevatedButton.icon(
+                onPressed: _triggerLoadSpike,
+                icon: const Icon(Icons.bolt),
+                label: const Text('Simulate Load Stress Test'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGaugeCard(String title, String value, double ratio, Color color, IconData icon) {
+    return Expanded(
+      child: Card(
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Theme.of(context).dividerColor.withOpacity(0.3)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, size: 16, color: color),
+                  const SizedBox(width: 6),
+                  Text(title, style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
+              const SizedBox(height: 10),
+              LinearProgressIndicator(
+                value: ratio.clamp(0.0, 1.0),
+                backgroundColor: color.withOpacity(0.15),
+                valueColor: AlwaysStoppedAnimation<Color>(color),
+                borderRadius: BorderRadius.circular(8),
+                minHeight: 6,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildServiceRow(Map<String, dynamic> node) {
+    final isHealthy = node['isHealthy'] as bool;
+    final color = isHealthy ? Colors.green : Colors.red;
+
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: Theme.of(context).dividerColor.withOpacity(0.3)),
+      ),
+      child: ListTile(
+        title: Text(node['name'] as String, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircleAvatar(radius: 4, backgroundColor: color),
+            const SizedBox(width: 8),
+            Text(
+              node['status'] as String,
+              style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+`;
+    return {
+      path: 'lib/screens/health/health_monitor_screen.dart',
+      content,
+      language: 'dart',
+      description: 'Fully interactive Health Monitor with real-time periodic ticking telemetry',
+      isNew: true,
+    };
+  }
+
+  private static generateAnalyticsScreen(plan: AgentPlan): AgentFileArtifact {
+    const content = `import 'package:flutter/material.dart';
+
+class AnalyticsScreen extends StatefulWidget {
+  const AnalyticsScreen({super.key});
+
+  @override
+  State<AnalyticsScreen> createState() => _AnalyticsScreenState();
+}
+
+class _AnalyticsScreenState extends State<AnalyticsScreen> {
+  String _timeRange = '7 Days';
+
+  final Map<String, Map<String, dynamic>> _dataByRange = {
+    '24 Hours': {
+      'pageViews': '1,420',
+      'activeSessions': '342',
+      'events': '4,120',
+      'conversion': '8.4%',
+      'bars': [0.2, 0.45, 0.3, 0.8, 0.95, 0.6, 0.75],
+      'labels': ['00h', '04h', '08h', '12h', '16h', '20h', '24h'],
+    },
+    '7 Days': {
+      'pageViews': '14,890',
+      'activeSessions': '2,450',
+      'events': '38,920',
+      'conversion': '9.2%',
+      'bars': [0.4, 0.65, 0.8, 0.55, 0.95, 0.35, 0.5],
+      'labels': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    },
+    '30 Days': {
+      'pageViews': '64,200',
+      'activeSessions': '11,200',
+      'events': '142,000',
+      'conversion': '8.9%',
+      'bars': [0.55, 0.7, 0.6, 0.85, 0.9, 0.75, 0.95],
+      'labels': ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7'],
+    },
+  };
+
+  int _selectedBarIndex = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = _dataByRange[_timeRange] ?? _dataByRange['7 Days']!;
+    final bars = (current['bars'] as List<double>);
+    final labels = (current['labels'] as List<String>);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Analytics & Reports'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.file_download_outlined),
+            tooltip: 'Export Report',
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Analytics report for \$_timeRange exported.')),
+              );
+            },
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Time Range Segment Selector
+            Center(
+              child: SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: '24 Hours', label: Text('24h')),
+                  ButtonSegment(value: '7 Days', label: Text('7d')),
+                  ButtonSegment(value: '30 Days', label: Text('30d')),
+                ],
+                selected: {_timeRange},
+                onSelectionChanged: (set) => setState(() {
+                  _timeRange = set.first;
+                  _selectedBarIndex = 0;
+                }),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // Dynamic KPI Cards
+            Row(
+              children: [
+                _buildStatCard('Page Views', current['pageViews'] as String, '+14.2%'),
+                const SizedBox(width: 12),
+                _buildStatCard('Active Sessions', current['activeSessions'] as String, '+6.8%'),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _buildStatCard('Total Events', current['events'] as String, '+22.4%'),
+                const SizedBox(width: 12),
+                _buildStatCard('Conversion Rate', current['conversion'] as String, '+1.2%'),
+              ],
+            ),
+
+            const SizedBox(height: 24),
+
+            // Interactive Telemetry Chart
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Traffic Trend', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                Text(
+                  'Selected: \${labels[_selectedBarIndex]} (\${(bars[_selectedBarIndex] * 100).toInt()}% peak)',
+                  style: const TextStyle(fontSize: 12, color: Colors.indigo, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Card(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: Theme.of(context).dividerColor.withOpacity(0.3)),
+              ),
+              child: Container(
+                height: 190,
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: List.generate(bars.length, (i) {
+                    final isSelected = _selectedBarIndex == i;
+                    return InkWell(
+                      onTap: () => setState(() => _selectedBarIndex = i),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 300),
+                              width: 28,
+                              height: 120 * bars[i],
+                              decoration: BoxDecoration(
+                                color: isSelected ? Colors.indigo : Colors.indigo.shade200,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              labels[i],
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                color: isSelected ? Colors.indigo : Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // Device Breakdown
+            const Text('Device Distribution', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            _buildDeviceRow('Mobile Browsers', 0.58, Colors.blue),
+            _buildDeviceRow('Desktop Browsers', 0.34, Colors.teal),
+            _buildDeviceRow('Tablet / Other', 0.08, Colors.amber),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatCard(String title, String value, String change) {
+    return Expanded(
+      child: Card(
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: Theme.of(context).dividerColor.withOpacity(0.3)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+              const SizedBox(height: 6),
+              Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  const Icon(Icons.trending_up, size: 14, color: Colors.green),
+                  const SizedBox(width: 4),
+                  Text(change, style: const TextStyle(fontSize: 11, color: Colors.green, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDeviceRow(String label, double ratio, Color color) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+              Text('\${(ratio * 100).toInt()}%', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          LinearProgressIndicator(
+            value: ratio,
+            backgroundColor: color.withOpacity(0.12),
+            valueColor: AlwaysStoppedAnimation<Color>(color),
+            borderRadius: BorderRadius.circular(6),
+            minHeight: 6,
+          ),
+        ],
+      ),
+    );
+  }
+}
+`;
+    return {
+      path: 'lib/screens/analytics/analytics_screen.dart',
+      content,
+      language: 'dart',
+      description: 'Fully interactive Analytics Screen with dynamic time range filtering and charts',
       isNew: true,
     };
   }
@@ -1519,7 +3233,12 @@ class _AuthScreenState extends State<AuthScreen> {
     };
   }
 
-  private static generateHomeScreen(plan: AgentPlan): AgentFileArtifact {
+  private static generateHomeScreen(plan: AgentPlan, usesSupabase = true): AgentFileArtifact {
+    // For dashboard-domain or local-only apps, generate a proper nav dashboard instead of a data list
+    if (plan.domain === 'dashboard' || !usesSupabase) {
+      return this.generateDashboardHomeScreen(plan);
+    }
+
     const mainModel = plan.models.find((m) => m.name !== 'UserProfile') || plan.models[0];
     const modelName = mainModel?.name || 'Item';
     const titleField = mainModel?.fields?.find((f) => f.name === 'title' || f.jsonKey === 'title');
@@ -1659,10 +3378,235 @@ ${widgetDecl}
     };
   }
 
-  private static generateProfileScreen(): AgentFileArtifact {
+  private static generateDashboardHomeScreen(plan: AgentPlan): AgentFileArtifact {
+    // Build navigation cards for all non-home screens
+    const navScreens = plan.screens.filter(
+      (s) => !['home', 'splash', 'auth', 'detail'].includes(s.routeName)
+    );
+
+    const navCards = navScreens.map((s) => {
+      const icon = s.routeName === 'users' ? 'Icons.people_outline'
+        : s.routeName === 'audit' ? 'Icons.history_outlined'
+        : s.routeName === 'health' ? 'Icons.monitor_heart_outlined'
+        : s.routeName === 'analytics' ? 'Icons.bar_chart_outlined'
+        : s.routeName === 'profile' ? 'Icons.person_outline'
+        : s.routeName === 'cart' ? 'Icons.shopping_cart_outlined'
+        : 'Icons.dashboard_outlined';
+      const label = s.name.replace('Screen', '');
+      return `          _NavCard(
+            icon: ${icon},
+            label: '${label}',
+            description: '${s.description || label}',
+            onTap: () => context.push('/${s.routeName}'),
+          ),`;
+    }).join('\n');
+
     const content = `import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import '../../services/supabase_service.dart';
+import '../../core/widgets/theme_toggle_button.dart';
+import '../../core/theme/app_theme.dart';
+
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('${plan.appName}'),
+        centerTitle: false,
+        actions: const [ThemeToggleButton()],
+        elevation: 0,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Welcome banner
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [AppTheme.primary, AppTheme.primary.withOpacity(0.7)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.admin_panel_settings, color: Colors.white, size: 28),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Welcome back!',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Colors.white.withOpacity(0.8),
+                              ),
+                            ),
+                            Text(
+                              '${plan.appName} Dashboard',
+                              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Manage your system from one central hub.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Colors.white.withOpacity(0.85),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 32),
+
+            Text(
+              'Quick Navigation',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Nav grid
+            GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisSpacing: 16,
+              mainAxisSpacing: 16,
+              childAspectRatio: 1.2,
+              children: [
+${navCards}
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NavCard extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String description;
+  final VoidCallback onTap;
+
+  const _NavCard({
+    required this.icon,
+    required this.label,
+    required this.description,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: colorScheme.surfaceContainerHighest.withOpacity(0.5),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: AppTheme.primary, size: 24),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.onSurface,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                description,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+`;
+    return {
+      path: 'lib/screens/home/home_screen.dart',
+      content,
+      language: 'dart',
+      description: 'Dashboard home with navigation grid cards',
+      isNew: true,
+    };
+  }
+
+  private static generateProfileScreen(usesSupabase = true): AgentFileArtifact {
+    const supabaseImport = usesSupabase ? `import '../../services/supabase_service.dart';` : '';
+    const userExpr = usesSupabase ? `final user = SupabaseService.currentUser;` : `const userEmail = 'admin@example.com';`;
+    const userEmailExpr = usesSupabase ? `user?.email ?? 'user@example.com'` : `userEmail`;
+    const signOutBtn = usesSupabase ? `          CustomButton(
+            text: 'Sign Out',
+            isOutlined: true,
+            icon: Icons.logout,
+            onPressed: () async {
+              await SupabaseService.signOut();
+              if (context.mounted) context.go('/auth');
+            },
+          ),` : `          CustomButton(
+            text: 'Back to Dashboard',
+            icon: Icons.dashboard_outlined,
+            onPressed: () => context.go('/'),
+          ),`;
+
+    const content = `import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+${supabaseImport}
 import '../../core/widgets/custom_button.dart';
 import '../../core/widgets/theme_toggle_button.dart';
 import '../../core/theme/theme_controller.dart';
@@ -1673,7 +3617,7 @@ class ProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final user = SupabaseService.currentUser;
+    ${userExpr}
 
     return Scaffold(
       appBar: AppBar(
@@ -1692,7 +3636,7 @@ class ProfileScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           Text(
-            user?.email ?? 'user@example.com',
+            ${userEmailExpr},
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             textAlign: TextAlign.center,
           ),
@@ -1741,15 +3685,7 @@ class ProfileScreen extends StatelessWidget {
             onTap: () {},
           ),
           const SizedBox(height: 32),
-          CustomButton(
-            text: 'Sign Out',
-            isOutlined: true,
-            icon: Icons.logout,
-            onPressed: () async {
-              await SupabaseService.signOut();
-              if (context.mounted) context.go('/auth');
-            },
-          ),
+${signOutBtn}
         ],
       ),
     );
@@ -2149,8 +4085,8 @@ ${wrapperOpen}
     };
   }
 
-  private static generateMainDart(plan: AgentPlan): AgentFileArtifact {
-    const content = `import 'package:flutter/material.dart';
+  private static generateMainDart(plan: AgentPlan, usesSupabase = true): AgentFileArtifact {
+    const content = usesSupabase ? `import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/constants/app_constants.dart';
 import 'core/theme/theme_controller.dart';
@@ -2158,16 +4094,20 @@ import 'app.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Restore the saved theme (light / dark / system) before first frame.
   await ThemeController.instance.load();
-
-  // Initialize Supabase Client
   await Supabase.initialize(
     url: AppConstants.supabaseUrl,
     anonKey: AppConstants.supabaseAnonKey,
   );
+  runApp(const ${this.appClassName(plan.appName)}());
+}
+` : `import 'package:flutter/material.dart';
+import 'core/theme/theme_controller.dart';
+import 'app.dart';
 
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await ThemeController.instance.load();
   runApp(const ${this.appClassName(plan.appName)}());
 }
 `;
@@ -2175,7 +4115,7 @@ Future<void> main() async {
       path: 'lib/main.dart',
       content,
       language: 'dart',
-      description: 'Application entry point initializing Supabase',
+      description: usesSupabase ? 'Application entry point initializing Supabase' : 'Application entry point',
       isNew: true,
     };
   }

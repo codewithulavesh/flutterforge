@@ -9,9 +9,12 @@ import {
   MessageSquare,
   Plus,
   RotateCcw,
+  Sparkles,
   Wrench,
   X,
 } from 'lucide-react';
+import { SkillRegistry } from '@/agent/skills';
+import { SkillsModal } from '@/features/workspace/SkillsModal';
 import { useProjectStore, type SendMessageOptions } from '@/stores/project.store';
 import { usePreviewStore } from '@/stores/preview.store';
 import { useWorkspaceStore } from '@/stores/workspace.store';
@@ -19,6 +22,8 @@ import { useTerminalStore } from '@/stores/terminal.store';
 import { useActivityStore } from '@/stores/activity.store';
 import { classifyChatIntent } from '@/agent/chatIntent';
 import { HarnessClient } from '@/agent/harnessClient';
+import type { ModelPreference } from '@/agent/modelRouting';
+import { useCredentialsStore } from '@/stores/credentials.store';
 import { ChatContextHandler } from '@/agent/chatContext';
 import { toast } from '@/components/ui/Toast';
 import { BrandLogo } from '@/components/BrandLogo';
@@ -174,15 +179,22 @@ function MessageBubble({
   onOpen,
   onRetry,
   canRetry,
+  onPromptClick,
+  onViewPreview,
 }: {
   message: AIMessage;
   page: boolean;
   onOpen: (path: string) => void;
   onRetry: () => void;
   canRetry: boolean;
+  onPromptClick?: (prompt: string) => void;
+  onViewPreview?: () => void;
 }) {
   const isUser = message.role === 'user';
   const changedFiles = Array.isArray(message.changed_files) ? message.changed_files : [];
+  const nextActions = Array.isArray((message.metadata as any)?.nextActionPrompts)
+    ? ((message.metadata as any).nextActionPrompts as string[])
+    : [];
 
   return (
     <Message className={cn(page ? 'max-w-full' : 'max-w-[94%]')} from={message.role}>
@@ -204,7 +216,40 @@ function MessageBubble({
         ) : (
           <MessageResponse>{message.content}</MessageResponse>
         )}
-        {!isUser && changedFiles.length > 0 && <ChangedFiles files={changedFiles} onOpen={onOpen} />}
+        {!isUser && changedFiles.length > 0 && (
+          <div className="mt-2 space-y-2">
+            <ChangedFiles files={changedFiles} onOpen={onOpen} />
+            {onViewPreview && (
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={onViewPreview}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-[var(--fb-ink)] px-3 py-1.5 text-[11px] font-semibold text-[var(--fb-bg)] transition-transform hover:-translate-y-px active:scale-95 shadow-sm"
+                >
+                  <Sparkles className="size-3 text-[var(--fb-magenta)]" />
+                  <span>Open Live Preview</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {!isUser && nextActions.length > 0 && onPromptClick && (
+          <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-[var(--fb-line)]/50 pt-2.5">
+            <span className="w-full font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--fb-dim)]">Suggested next actions:</span>
+            {nextActions.map((prompt) => (
+              <button
+                key={prompt}
+                type="button"
+                onClick={() => onPromptClick(prompt)}
+                className="group inline-flex items-center gap-1.5 rounded-full border border-[var(--fb-line)] bg-[var(--fb-card)] px-3 py-1 text-[11px] text-[var(--fb-ink)] transition-all hover:border-[var(--fb-ink)] hover:bg-[var(--fb-soft)] active:scale-95"
+              >
+                <Sparkles className="size-3 text-[var(--fb-magenta)] group-hover:rotate-12 transition-transform" />
+                <span>{prompt}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </MessageContent>
       {!isUser && (
         <MessageToolbar className="mt-1">
@@ -241,7 +286,7 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
     generatingIn,
   } = useProjectStore();
   const preview = usePreviewStore();
-  const { openFile, activeFile } = useWorkspaceStore();
+  const { openFile, activeFile, setActiveView } = useWorkspaceStore();
   const {
     isGenerating,
     isAnswering,
@@ -263,13 +308,17 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
   const [isEngineConnected, setIsEngineConnected] = useState<boolean | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [dismissedRepair, setDismissedRepair] = useState<string | null>(null);
-  const [modelPreference, setModelPreference] = useState<'fast' | 'quality'>(() => {
+  const [modelPreference, setModelPreference] = useState<ModelPreference>(() => {
     try {
-      return localStorage.getItem('ff-model-preference') === 'quality' ? 'quality' : 'fast';
+      const saved = localStorage.getItem('ff-model-preference');
+      return saved === 'quality' || saved === 'fast' || saved === 'auto' ? saved : 'auto';
     } catch {
-      return 'fast';
+      return 'auto';
     }
   });
+
+  const [isSkillsOpen, setIsSkillsOpen] = useState(false);
+  const [activeSkillCount, setActiveSkillCount] = useState(() => SkillRegistry.getActiveSkills().length);
 
   const busy = isGenerating || isAnswering || generatingIn === currentProject?.id;
 
@@ -320,6 +369,10 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
     return () => {
       mounted = false;
     };
+  }, []);
+
+  useEffect(() => {
+    void useCredentialsStore.getState().load();
   }, []);
 
   useEffect(() => {
@@ -408,13 +461,8 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
   }
 
   function handleStop() {
-    if (!abortRef.current && generatingIn === currentProject?.id) {
-      stopRepair();
-      addLine({ type: 'error', content: '⏹ Repair stopped by user' });
-      const store = useActivityStore.getState();
-      if (store.run?.status === 'running') store.end('stopped', 'Repair stopped by user');
-      return;
-    }
+    stopRepair();
+    useProjectStore.setState({ generatingIn: null });
     abortRef.current?.abort();
     abortRef.current = null;
     sendingRef.current = false;
@@ -476,7 +524,7 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
       runId = useActivityStore.getState().run?.id ?? null;
 
       setGenerating(true);
-      setCurrentPhase(isNewApp ? 'Starting the harness engine…' : 'Applying your changes…');
+      setCurrentPhase(isNewApp ? 'Starting AI Agent…' : 'Applying your changes…');
       addLine({ type: 'output', content: `▶ ${text.slice(0, 140)}` });
 
       const result = await sendMessage(
@@ -658,17 +706,34 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
+        <button
+          aria-label="Manage agent capability skills"
+          className="flex h-8 items-center gap-1.5 rounded-full border border-[var(--fb-line)] bg-transparent px-2.5 font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--fb-muted)] outline-none transition-colors hover:border-[var(--fb-ink)] hover:text-[var(--fb-ink)]"
+          onClick={() => setIsSkillsOpen(true)}
+          title="Connect modular Flutter capability skills (Material 3, Clean Architecture, Animations, Web Parity...)"
+          type="button"
+        >
+          <Sparkles className="size-3 text-[var(--fb-magenta)]" />
+          <span className="hidden sm:inline">Skills</span>
+          <span className="grid size-4 place-items-center rounded-full bg-[var(--fb-magenta)]/15 text-[8px] font-bold text-[var(--fb-magenta)]">
+            {activeSkillCount}
+          </span>
+        </button>
         <label className="sr-only" htmlFor="ff-model-preference">Generation model</label>
         <select
           aria-label="Generation model"
           className="h-8 max-w-[88px] rounded-full border border-[var(--fb-line)] bg-transparent px-2.5 font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--fb-muted)] outline-none transition-colors hover:border-[var(--fb-ink)] hover:text-[var(--fb-ink)] focus-visible:border-[var(--fb-ink)] sm:max-w-[104px]"
           id="ff-model-preference"
-          onChange={(event) => setModelPreference(event.target.value === 'quality' ? 'quality' : 'fast')}
-          title="Choose a faster response or a more capable model"
+          onChange={(event) => {
+            const next = event.target.value;
+            setModelPreference(next === 'quality' ? 'quality' : next === 'fast' ? 'fast' : 'auto');
+          }}
+          title="Auto sends first passes to the frontier model and edits to the fast model. Frontier needs Pro or your own OpenRouter key."
           value={modelPreference}
         >
+          <option value="auto">Auto</option>
           <option value="fast">Fast</option>
-          <option value="quality">Quality</option>
+          <option value="quality">Frontier</option>
         </select>
         <button
           aria-label="New chat"
@@ -856,6 +921,15 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
                   isInitialGeneration: userMessageCount <= 1 && classifyChatIntent(lastUserMessage) === 'build',
                 })}
                 page={page}
+                onPromptClick={(prompt) => {
+                  if (busy) {
+                    setInput(prompt);
+                    focusComposer();
+                  } else {
+                    void handleSend(prompt);
+                  }
+                }}
+                onViewPreview={() => setActiveView('preview')}
               />
             </Fragment>
           );
@@ -958,6 +1032,11 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
         <div className="shrink-0 border-t border-[var(--fb-line)] bg-[var(--fb-bg)]/95 px-5 pb-4 pt-3 backdrop-blur sm:px-10">
           <div className="mx-auto w-full max-w-[860px]">{composer}</div>
         </div>
+        <SkillsModal
+          isOpen={isSkillsOpen}
+          onClose={() => setIsSkillsOpen(false)}
+          onSkillsChanged={(skills) => setActiveSkillCount(skills.filter((s) => s.enabled).length)}
+        />
       </div>
     );
   }
@@ -969,6 +1048,11 @@ export function AIBuilderPanel({ variant = 'sidebar' }: { variant?: PanelVariant
       <div className="shrink-0 border-t border-[var(--fb-line)] bg-[var(--fb-card)] px-3 py-2.5">
         <div className="mx-auto w-full max-w-2xl">{composer}</div>
       </div>
+      <SkillsModal
+        isOpen={isSkillsOpen}
+        onClose={() => setIsSkillsOpen(false)}
+        onSkillsChanged={(skills) => setActiveSkillCount(skills.filter((s) => s.enabled).length)}
+      />
     </div>
   );
 }

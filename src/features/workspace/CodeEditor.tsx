@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Editor, { type OnMount } from '@monaco-editor/react';
-import { X, Save } from 'lucide-react';
+import Editor, { type BeforeMount, type OnMount } from '@monaco-editor/react';
+import { FileCode2, X, Save } from 'lucide-react';
 import { useProjectStore } from '@/stores/project.store';
 import { useWorkspaceStore } from '@/stores/workspace.store';
 import { toast } from '@/components/ui/Toast';
@@ -13,6 +13,8 @@ export function CodeEditor() {
   const currentFile = files.find((f) => f.path === activeFile);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const draftsRef = useRef(drafts);
+  const activeContent = activeFile ? drafts[activeFile] ?? currentFile?.content ?? '' : '';
+  const isBufferEmpty = Boolean(activeFile && currentFile && activeContent.length === 0);
 
   const updateDraft = useCallback((path: string, content: string) => {
     const nextDrafts = { ...draftsRef.current, [path]: content };
@@ -34,9 +36,7 @@ export function CodeEditor() {
     }
   }, [activeFile, currentFile?.path]);
 
-  const handleMount: OnMount = (editor, monaco) => {
-    editorRef.current = editor;
-
+  const handleBeforeMount: BeforeMount = (monaco) => {
     monaco.languages.register({ id: 'dart' });
     monaco.languages.setMonarchTokensProvider('dart', {
       tokenizer: {
@@ -97,6 +97,10 @@ export function CodeEditor() {
     });
   };
 
+  const handleMount: OnMount = (editor) => {
+    editorRef.current = editor;
+  };
+
   const handleSave = useCallback(async () => {
     if (!currentProject || !activeFile || !editorRef.current) return;
     const content = draftsRef.current[activeFile] ?? editorRef.current.getValue();
@@ -106,8 +110,16 @@ export function CodeEditor() {
     }
     const saved = await saveFile(currentProject.id, activeFile, content);
     clearDraft(activeFile, content);
-    if (saved) toast('success', 'File saved');
-    else toast('warning', 'Saved locally only — backend unavailable, changes may not persist.');
+    if (saved) {
+      toast('success', 'File saved');
+      void useProjectStore.getState().autoCheckpoint(
+        currentProject.id,
+        `Edit: ${activeFile}`,
+        'Manual editor save',
+      );
+    } else {
+      toast('warning', 'Saved locally only — backend unavailable, changes may not persist.');
+    }
   }, [currentProject, activeFile, currentFile?.content, saveFile, clearDraft]);
 
   useEffect(() => {
@@ -145,6 +157,11 @@ export function CodeEditor() {
           <div className="shrink-0 rounded-full border border-[var(--fb-line)] bg-[var(--fb-card)] px-2.5 py-1 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--fb-muted)]">
             Editor
           </div>
+          {!activeFile && (
+            <span className="shrink-0 rounded-full border border-[var(--fb-line)] px-2 py-1 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--fb-dim)]">
+              204 · No content
+            </span>
+          )}
           {activeFile && (
             <div className="min-w-0 overflow-hidden">
               <div className="truncate text-[11.5px] font-semibold text-[var(--fb-ink)]">{activeFile}</div>
@@ -155,15 +172,22 @@ export function CodeEditor() {
           )}
         </div>
         {activeFile && (
-          <button
-            onClick={handleSave}
-            disabled={!isDirty(activeFile)}
-            title="Save file (Cmd/Ctrl+S)"
-            className="flex shrink-0 items-center gap-1.5 rounded-full border border-[var(--fb-line)] bg-[var(--fb-card)] px-3 py-1.5 text-[10px] font-semibold text-[var(--fb-muted)] transition-colors hover:border-[var(--fb-ink)] hover:text-[var(--fb-ink)] disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Save size={12} />
-            Save
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {isBufferEmpty && (
+              <span className="rounded-full border border-[var(--fb-line)] px-2 py-1 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--fb-dim)]">
+                204 · Empty
+              </span>
+            )}
+            <button
+              onClick={handleSave}
+              disabled={!isDirty(activeFile)}
+              title="Save file (Cmd/Ctrl+S)"
+              className="flex shrink-0 items-center gap-1.5 rounded-full border border-[var(--fb-line)] bg-[var(--fb-card)] px-3 py-1.5 text-[10px] font-semibold text-[var(--fb-muted)] transition-colors hover:border-[var(--fb-ink)] hover:text-[var(--fb-ink)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Save size={12} />
+              Save
+            </button>
+          </div>
         )}
       </div>
 
@@ -199,38 +223,55 @@ export function CodeEditor() {
       </div>
 
       {/* Editor */}
-      <div className="flex-1 overflow-hidden">
+      <div className="relative flex-1 overflow-hidden">
         {activeFile && currentFile ? (
-          <Editor
-            height="100%"
-            path={activeFile}
-            defaultLanguage="dart"
-            theme="flutterforge-dark"
-            value={currentFile.content}
-            onMount={handleMount}
-            onChange={(value: string | undefined) => {
-              if (activeFile) updateDraft(activeFile, value ?? '');
-            }}
-            options={{
-              fontSize: 13,
-              fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-              lineHeight: 20,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              padding: { top: 12, bottom: 12 },
-              smoothScrolling: true,
-              cursorBlinking: 'smooth',
-              renderLineHighlight: 'all',
-              fontLigatures: true,
-              tabSize: 2,
-              wordWrap: 'on',
-              automaticLayout: true,
-            }}
-          />
+          <>
+            <Editor
+              height="100%"
+              path={activeFile}
+              defaultLanguage="dart"
+              theme="flutterforge-dark"
+              value={currentFile.content}
+              beforeMount={handleBeforeMount}
+              onMount={handleMount}
+              onChange={(value: string | undefined) => {
+                if (activeFile) updateDraft(activeFile, value ?? '');
+              }}
+              options={{
+                fontSize: 13,
+                fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+                lineHeight: 20,
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                padding: { top: 12, bottom: 12 },
+                smoothScrolling: true,
+                cursorBlinking: 'smooth',
+                renderLineHighlight: 'all',
+                fontLigatures: true,
+                tabSize: 2,
+                wordWrap: 'on',
+                automaticLayout: true,
+              }}
+            />
+            {isBufferEmpty && (
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
+                <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-white/60">
+                  204 · No content
+                </span>
+                <p className="mt-3 text-[13px] font-semibold text-white/70">This file is empty</p>
+                <p className="mt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-white/35">
+                  Start typing to fill it
+                </p>
+              </div>
+            )}
+          </>
         ) : (
-          <div className="flex flex-col items-center justify-center h-full px-6 text-center">
+          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+            <span className="mb-4 rounded-full border border-[var(--fb-line)] bg-[var(--fb-card)] px-2.5 py-1 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--fb-dim)]">
+              204 · No content
+            </span>
             <div className="mb-4 flex size-14 items-center justify-center rounded-[18px] border border-[var(--fb-line)] bg-[var(--fb-card)]">
-              <Save size={24} className="text-[var(--fb-ink)]" />
+              <FileCode2 size={24} className="text-[var(--fb-ink)]" />
             </div>
             <p className="ffb-display ffb-caps text-[22px] leading-none text-[var(--fb-ink)]">Open a file</p>
             <p className="mt-2 font-mono text-[9px] uppercase tracking-[0.14em] text-[var(--fb-dim)]">Select one from the explorer</p>

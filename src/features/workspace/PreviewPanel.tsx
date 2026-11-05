@@ -14,6 +14,8 @@ import {
   AlertCircle,
   Loader2,
   Globe,
+  ScanEye,
+  Zap,
 } from 'lucide-react';
 import { useWorkspaceStore } from '@/stores/workspace.store';
 import { useProjectStore } from '@/stores/project.store';
@@ -21,6 +23,8 @@ import { useTerminalStore } from '@/stores/terminal.store';
 import { usePreviewStore } from '@/stores/preview.store';
 import { DEVICE_PRESETS } from '@/utils/constants';
 import { cn } from '@/utils/cn';
+import { toast } from '@/components/ui/Toast';
+import { VisualQAPanel } from './VisualQAPanel';
 
 const DEVICE_TABS = [
   { label: 'Mobile', device: 'iPhone 15 Pro', icon: Smartphone },
@@ -37,7 +41,18 @@ export function PreviewPanel() {
   const [zoom, setZoom] = useState(100);
   const [fullscreen, setFullscreen] = useState(false);
   const [autoBuildAttempted, setAutoBuildAttempted] = useState(false);
+  const [qaOpen, setQaOpen] = useState(false);
+  const [isReloading, setIsReloading] = useState(false);
   const previewMode = 'web' as const;
+  const serverOnline = preview.serverOnline;
+
+  // Ping harness server health on mount
+  useEffect(() => {
+    preview.pingServer();
+    // Re-check every 30s while the panel is mounted
+    const interval = setInterval(() => preview.pingServer(), 30_000);
+    return () => clearInterval(interval);
+  }, []);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -144,6 +159,19 @@ export function PreviewPanel() {
     }
   };
 
+  const handleHotReload = async () => {
+    if (!projectId || isReloading) return;
+    setIsReloading(true);
+    try {
+      await preview.reload(projectId);
+      toast('success', 'Hot reload sent to the warm preview');
+    } catch (error) {
+      toast('error', error instanceof Error ? error.message : 'Hot reload failed');
+    } finally {
+      setIsReloading(false);
+    }
+  };
+
   /* ── What to show inside the device screen ─── */
   const renderScreenContent = () => {
     // 1. AI is actively synthesizing code
@@ -233,6 +261,7 @@ export function PreviewPanel() {
 
     // 4. Web mode: Build failed state
     if (previewMode === 'web' && (status === 'failed' || previewError)) {
+      const isServerOffline = previewError?.includes('offline') || serverOnline === false;
       const logs = session?.logs ?? [];
       const causeLines = logs.filter((l) =>
         /error|exception|because|depends on|version solving|failed to|not found|no such|invalid/i.test(l),
@@ -246,10 +275,18 @@ export function PreviewPanel() {
             <AlertCircle size={24} className="text-red-400" />
           </div>
           <h3 className="text-sm font-bold text-white mb-1">Flutter Web Build Failed</h3>
-          <p className="text-[10px] text-slate-400 max-w-[240px] mb-3 leading-relaxed">
+          <p className="text-[10px] text-slate-400 max-w-[280px] mb-3 leading-relaxed">
             {previewError || 'The Flutter web compiler reported errors. Fix the code or retry the build.'}
           </p>
-          {shown.length > 0 && (
+          {isServerOffline && (
+            <div className="w-full max-w-[380px] mb-4 bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-left">
+              <p className="text-[10px] text-amber-300 font-semibold mb-1">⚠ Harness server appears offline</p>
+              <p className="text-[9px] text-slate-400 mb-2">Open a terminal in the project folder and run:</p>
+              <code className="block text-[10px] font-mono bg-black/60 rounded-lg px-3 py-2 text-emerald-300 select-all">npm run server</code>
+              <p className="text-[9px] text-slate-500 mt-2">Then restart the dev server: <code className="text-emerald-400">npm run dev</code></p>
+            </div>
+          )}
+          {!isServerOffline && shown.length > 0 && (
             <div className="w-full max-w-[420px] max-h-40 overflow-y-auto ff-scrollbar text-left font-mono text-[9px] leading-relaxed bg-black/60 border border-red-500/20 rounded-xl p-3 mb-4 space-y-1">
               {shown.map((l, i) => (
                 <div key={i} className="text-red-300/90 break-all">{l}</div>
@@ -376,6 +413,21 @@ export function PreviewPanel() {
             <span className={cn('h-1.5 w-1.5 rounded-full', isRunning ? 'bg-black animate-pulse' : isBuilding ? 'bg-black animate-pulse' : status === 'failed' ? 'bg-[var(--fb-danger)]' : 'bg-[var(--fb-dim)]')} />
             {isRunning ? 'Live' : isBuilding ? 'Building' : status === 'failed' ? 'Failed' : 'Ready'}
           </span>
+          {/* Server health indicator */}
+          {serverOnline !== null && (
+            <span
+              title={serverOnline ? 'Harness server online' : 'Harness server offline — run: npm run server'}
+              className={cn(
+                'inline-flex items-center gap-1 rounded-full px-2 py-1 text-[9px] font-semibold',
+                serverOnline
+                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                  : 'bg-red-500/10 text-red-400 border border-red-500/20'
+              )}
+            >
+              <span className={cn('h-1.5 w-1.5 rounded-full', serverOnline ? 'bg-emerald-400' : 'bg-red-400 animate-pulse')} />
+              {serverOnline ? 'Server' : 'Server offline'}
+            </span>
+          )}
         </div>
 
         <div className="h-4 w-px shrink-0 bg-[var(--fb-line)]" />
@@ -438,6 +490,26 @@ export function PreviewPanel() {
           >
             <RotateCw size={13} />
           </button>
+          {isRunning && (
+            <button
+              onClick={() => void handleHotReload()}
+              disabled={isReloading}
+              className="p-1.5 rounded-full text-[var(--fb-muted)] hover:text-[var(--fb-ink)] hover:bg-[var(--fb-soft)] transition-colors disabled:opacity-50"
+              title="Hot reload the warm Flutter engine"
+              aria-label="Hot reload preview"
+            >
+              {isReloading ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />}
+            </button>
+          )}
+          <button
+            onClick={() => setQaOpen(true)}
+            disabled={!isRunning}
+            className="p-1.5 rounded-full text-[var(--fb-muted)] hover:text-[var(--fb-ink)] hover:bg-[var(--fb-soft)] transition-colors disabled:opacity-40"
+            title="Visual QA — capture mobile, tablet, and desktop"
+            aria-label="Open visual QA"
+          >
+            <ScanEye size={13} />
+          </button>
           <button
             onClick={handleRefresh}
             className="p-1.5 rounded-full text-[var(--fb-muted)] hover:text-[var(--fb-ink)] hover:bg-[var(--fb-soft)] transition-colors"
@@ -497,28 +569,72 @@ export function PreviewPanel() {
           className="relative z-10 transition-all duration-300"
           style={{ width: displayW, height: displayH }}
         >
-          {/* Outer device shell */}
+          {/* Outer device shell (Titanium bezel with ambient studio lighting - no harsh neon shadows) */}
           <div
-            className="absolute inset-0 rounded-[2rem] bg-[#1a1a1a]"
-            style={{ boxShadow: '0 0 0 4px #141414, 10px 10px 0 var(--fb-lime), 0 30px 80px rgba(0,0,0,0.25)' }}
+            className={cn(
+              'absolute inset-0 bg-gradient-to-b from-[#22242c] via-[#16171d] to-[#101116]',
+              previewDevice === 'iPhone 15 Pro'
+                ? 'rounded-[44px]'
+                : previewDevice === 'iPad Pro'
+                ? 'rounded-[32px]'
+                : 'rounded-[16px]',
+            )}
+            style={{
+              boxShadow:
+                previewDevice === 'iPhone 15 Pro'
+                  ? '0 0 0 1px rgba(255, 255, 255, 0.14), 0 0 0 4px #1c1d24, 0 0 0 6px #0d0e12, 0 30px 70px -15px rgba(0, 0, 0, 0.75), 0 0 30px rgba(0, 0, 0, 0.35)'
+                  : previewDevice === 'iPad Pro'
+                  ? '0 0 0 1px rgba(255, 255, 255, 0.12), 0 0 0 4px #1c1d24, 0 0 0 6px #0d0e12, 0 35px 80px -20px rgba(0, 0, 0, 0.75)'
+                  : '0 0 0 1px rgba(255, 255, 255, 0.1), 0 0 0 3px #1c1d24, 0 25px 60px -15px rgba(0, 0, 0, 0.65)',
+            }}
           />
 
-          {/* Dynamic Island (phones only) */}
+          {/* Physical Side Buttons (iPhone only) */}
           {previewDevice === 'iPhone 15 Pro' && isPortrait && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 w-28 h-6 bg-black rounded-full z-20 flex items-center justify-center gap-1.5 pointer-events-none select-none">
-              <div className="w-2 h-2 rounded-full bg-[#222]" />
-              <div className="w-3 h-3 rounded-full bg-[#222] border border-white/5" />
+            <>
+              {/* Action Button */}
+              <div className="w-[3px] h-7 bg-[#2e303a] absolute -left-[5px] top-24 rounded-l-sm border-r border-black/40 pointer-events-none" />
+              {/* Volume Up */}
+              <div className="w-[3px] h-12 bg-[#2e303a] absolute -left-[5px] top-36 rounded-l-sm border-r border-black/40 pointer-events-none" />
+              {/* Volume Down */}
+              <div className="w-[3px] h-12 bg-[#2e303a] absolute -left-[5px] top-52 rounded-l-sm border-r border-black/40 pointer-events-none" />
+              {/* Power / Side Button */}
+              <div className="w-[3px] h-16 bg-[#2e303a] absolute -right-[5px] top-40 rounded-r-sm border-l border-black/40 pointer-events-none" />
+            </>
+          )}
+
+          {/* Dynamic Island (iPhone portrait) */}
+          {previewDevice === 'iPhone 15 Pro' && isPortrait && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 w-28 h-7 bg-black rounded-full z-20 flex items-center justify-between px-3 pointer-events-none select-none shadow-[0_1px_4px_rgba(0,0,0,0.8),inset_0_0_1px_rgba(255,255,255,0.2)]">
+              {/* Front Camera with optical lens reflection */}
+              <div className="w-2.5 h-2.5 rounded-full bg-[#08080f] border border-[#1e202e] flex items-center justify-center">
+                <div className="w-1 h-1 rounded-full bg-[#1b2640]/90" />
+              </div>
+              {/* Sensor */}
+              <div className="w-2 h-2 rounded-full bg-[#0a0a0e]" />
             </div>
           )}
 
-          {/* Screen */}
-          <div className="absolute rounded-[1.6rem] overflow-hidden bg-slate-950" style={{ inset: 4 }}>
+          {/* Screen Content */}
+          <div
+            className={cn(
+              'absolute overflow-hidden bg-slate-950',
+              previewDevice === 'iPhone 15 Pro'
+                ? 'rounded-[38px]'
+                : previewDevice === 'iPad Pro'
+                ? 'rounded-[26px]'
+                : 'rounded-[12px]',
+            )}
+            style={{
+              inset: previewDevice === 'iPhone 15 Pro' ? 6 : previewDevice === 'iPad Pro' ? 8 : 4,
+            }}
+          >
             {renderScreenContent()}
           </div>
 
-          {/* Home bar (phones) */}
+          {/* Home indicator bar (phones) */}
           {previewDevice === 'iPhone 15 Pro' && isPortrait && (
-            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-28 h-1 rounded-full bg-white/30 z-20 pointer-events-none select-none" />
+            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-32 h-1 rounded-full bg-white/40 backdrop-blur-sm z-20 pointer-events-none select-none" />
           )}
         </div>
 
@@ -527,6 +643,13 @@ export function PreviewPanel() {
           {rawW}×{rawH} · {Math.round(scale * 100)}%
         </div>
       </div>
+
+      <VisualQAPanel
+        open={qaOpen}
+        onClose={() => setQaOpen(false)}
+        projectId={projectId}
+        previewUrl={previewUrl}
+      />
 
     </div>
   );

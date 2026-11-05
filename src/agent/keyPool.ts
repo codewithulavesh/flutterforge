@@ -31,10 +31,44 @@ export class OpenRouterKeyPool {
   }
 
   private initKeys() {
-    // Never read provider secrets from Vite env: these values are in the
-    // browser bundle and visible to every user. Keys can be supplied by the
-    // user explicitly or kept server-side by a trusted deployment.
     const keyList = [...DEFAULT_OPENROUTER_KEYS];
+
+    try {
+      if (typeof import.meta !== 'undefined' && import.meta.env) {
+        if (import.meta.env.VITE_OPENROUTER_API_KEYS) {
+          const parsed = (import.meta.env.VITE_OPENROUTER_API_KEYS as string)
+            .split(',')
+            .map((k) => k.trim())
+            .filter(Boolean);
+          keyList.push(...parsed);
+        }
+        if (import.meta.env.VITE_OPENROUTER_API_KEY) {
+          keyList.push(import.meta.env.VITE_OPENROUTER_API_KEY.trim());
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      if (typeof process !== 'undefined' && process.env) {
+        if (process.env.VITE_OPENROUTER_API_KEYS) {
+          const parsed = process.env.VITE_OPENROUTER_API_KEYS
+            .split(',')
+            .map((k) => k.trim())
+            .filter(Boolean);
+          keyList.push(...parsed);
+        }
+        if (process.env.VITE_OPENROUTER_API_KEY) {
+          keyList.push(process.env.VITE_OPENROUTER_API_KEY.trim());
+        }
+        if (process.env.OPENROUTER_API_KEY) {
+          keyList.push(process.env.OPENROUTER_API_KEY.trim());
+        }
+      }
+    } catch {
+      // ignore
+    }
 
     for (const key of keyList) {
       if (!this.keys.has(key)) {

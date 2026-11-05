@@ -474,6 +474,9 @@ export function FileExplorer() {
       >
         {!hasFiles ? (
           <div className="flex flex-col items-center px-4 py-12 text-center">
+            <span className="mb-3 rounded-full border border-[var(--ff-border)] bg-[var(--ff-surface-2)] px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--ff-text-dim)]">
+              204 · No content
+            </span>
             <FolderTree className="mb-2 size-8 text-[var(--ff-text-dim)] opacity-50" />
             <p className="text-xs font-medium text-[var(--ff-text)]">No files yet</p>
             <p className="mt-1 text-[11px] text-[var(--ff-text-dim)]">
@@ -483,6 +486,9 @@ export function FileExplorer() {
         ) : filteredFiles ? (
           filteredFiles.length === 0 ? (
             <div className="flex flex-col items-center px-4 py-10 text-center">
+              <span className="mb-3 rounded-full border border-[var(--ff-border)] bg-[var(--ff-surface-2)] px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--ff-text-dim)]">
+                404 · Not found
+              </span>
               <SearchX className="mb-2 size-7 text-[var(--ff-text-dim)] opacity-60" />
               <p className="text-xs text-[var(--ff-text-muted)]">No files match “{search.trim()}”</p>
             </div>

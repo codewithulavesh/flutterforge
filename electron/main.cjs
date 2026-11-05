@@ -1,9 +1,10 @@
 'use strict';
 
-const { app, BrowserWindow, Menu, dialog, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, safeStorage, session, shell } = require('electron');
 const { spawn } = require('node:child_process');
-const { existsSync, writeFileSync } = require('node:fs');
+const { existsSync, readFileSync, writeFileSync } = require('node:fs');
 const path = require('node:path');
+const { captureScreens } = require('./qa.cjs');
 
 app.setName('FlutterForge');
 
@@ -23,10 +24,14 @@ function serverEntry() {
   const appPath = app.getAppPath();
   const unpacked = appPath.replace(/app\.asar$/, 'app.asar.unpacked');
   const candidates = [
-    path.join(unpacked, 'server', 'index.mjs'),
-    path.join(appPath, 'server', 'index.mjs'),
+    path.join(unpacked, 'dist-server', 'index.js'),
+    path.join(appPath, 'dist-server', 'index.js'),
+    path.join(unpacked, 'server', 'index.js'),
+    path.join(appPath, 'server', 'index.js'),
+    path.join(unpacked, 'server', 'index.ts'),
+    path.join(appPath, 'server', 'index.ts'),
   ];
-  return candidates.find((candidate) => existsSync(candidate)) || candidates[1];
+  return candidates.find((candidate) => existsSync(candidate)) || candidates[candidates.length - 1];
 }
 
 /** Resolve the built renderer directory. */
@@ -49,6 +54,116 @@ async function isServerUp(url) {
   }
 }
 
+// ── BYOK vault ────────────────────────────────────────────────────────────────
+// Keys live only in the main process and on disk (OS-encrypted when available).
+// The renderer sees masked values; the engine receives keys over loopback.
+
+const VAULT_FILE = 'credentials.vault';
+const VAULT_PROVIDERS = new Set(['openrouter', 'deepseek']);
+
+function vaultPath() {
+  return path.join(app.getPath('userData'), VAULT_FILE);
+}
+
+function encryptionAvailable() {
+  try {
+    return safeStorage.isEncryptionAvailable();
+  } catch {
+    return false;
+  }
+}
+
+function maskKey(key) {
+  if (typeof key !== 'string' || key.length <= 12) return '••••••••';
+  return `${key.slice(0, 6)}…${key.slice(-4)}`;
+}
+
+function readVault() {
+  const empty = { version: 1, providers: {} };
+  const file = vaultPath();
+  if (!existsSync(file)) return empty;
+  try {
+    const raw = readFileSync(file);
+    const text = encryptionAvailable() ? safeStorage.decryptString(raw) : raw.toString('utf8');
+    const parsed = JSON.parse(text);
+    return {
+      version: 1,
+      providers: parsed && typeof parsed.providers === 'object' && parsed.providers ? parsed.providers : {},
+    };
+  } catch (error) {
+    console.error('[vault] Could not read stored credentials:', error instanceof Error ? error.message : String(error));
+    return empty;
+  }
+}
+
+function writeVault(vault) {
+  const payload = JSON.stringify(vault);
+  if (encryptionAvailable()) {
+    writeFileSync(vaultPath(), safeStorage.encryptString(payload), { mode: 0o600 });
+    return 'os-encrypted';
+  }
+  writeFileSync(vaultPath(), payload, { mode: 0o600 });
+  return 'plaintext-file';
+}
+
+function vaultStatus() {
+  const vault = readVault();
+  const describe = (provider) => {
+    const entry = vault.providers[provider];
+    return entry && typeof entry.key === 'string' && entry.key
+      ? { configured: true, masked: maskKey(entry.key), updatedAt: entry.updatedAt || null, source: 'vault' }
+      : { configured: false, masked: null, updatedAt: null, source: null };
+  };
+  return {
+    storage: encryptionAvailable() ? 'os-encrypted' : 'plaintext-file',
+    credentials: { openrouter: describe('openrouter'), deepseek: describe('deepseek') },
+  };
+}
+
+function validateVaultKey(provider, key) {
+  if (!VAULT_PROVIDERS.has(provider)) throw new Error('Unknown credential provider.');
+  const trimmed = typeof key === 'string' ? key.trim() : '';
+  if (trimmed.length < 8 || trimmed.length > 300) throw new Error('API keys must be 8–300 characters.');
+  if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) throw new Error('The key contains characters that are not allowed.');
+  return trimmed;
+}
+
+async function pushCredentialToServer(provider, key) {
+  if (!serverUrl) return false;
+  try {
+    const response = await fetch(`${serverUrl}/api/credentials`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, key }),
+      signal: AbortSignal.timeout(5000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function removeCredentialFromServer(provider) {
+  if (!serverUrl) return false;
+  try {
+    const response = await fetch(`${serverUrl}/api/credentials/${provider}`, {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(5000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function syncVaultToServer() {
+  const vault = readVault();
+  for (const provider of VAULT_PROVIDERS) {
+    const key = vault.providers[provider]?.key;
+    if (typeof key === 'string' && key) await pushCredentialToServer(provider, key);
+  }
+}
+
 /**
  * Start the local engine server. In a packaged app it serves the built UI and
  * the harness API from one origin; in development Vite serves the UI and
@@ -62,7 +177,8 @@ function startServer({ port = 8787 } = {}) {
       return;
     }
 
-    const child = spawn(process.execPath, [entry], {
+    const spawnArgs = entry.endsWith('.ts') ? ['--import', 'tsx/esm', entry] : [entry];
+    const child = spawn(process.execPath, spawnArgs, {
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
@@ -354,6 +470,8 @@ async function runSmokeTest(window) {
       text: (document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 240),
       theme: document.documentElement.getAttribute('data-theme'),
       desktopBridge: Boolean(window.flutterforgeDesktop),
+      qaBridge: Boolean(window.flutterforgeDesktop?.qa?.capture),
+      vaultBridge: Boolean(window.flutterforgeDesktop?.vault?.setKey),
       health,
     };
   })()`);
@@ -434,6 +552,59 @@ function registerIpc() {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
+
+  let qaInFlight = false;
+  ipcMain.handle('qa:capture', async (event, payload) => {
+    if (!isTrustedRenderer(event)) return { ok: false, error: 'Untrusted renderer.' };
+    if (!payload || typeof payload !== 'object') return { ok: false, error: 'Invalid capture request.' };
+    if (qaInFlight) return { ok: false, error: 'A visual QA sweep is already running.' };
+    qaInFlight = true;
+    try {
+      return await captureScreens({
+        url: typeof payload.url === 'string' ? payload.url : '',
+        baseUrl: serverUrl || undefined,
+        projectId: typeof payload.projectId === 'string' ? payload.projectId : 'project',
+        outputRoot: path.join(app.getPath('userData'), 'qa'),
+      });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      qaInFlight = false;
+    }
+  });
+
+  ipcMain.handle('vault:status', (event) => {
+    if (!isTrustedRenderer(event)) return { ok: false, error: 'Untrusted renderer.' };
+    return { ok: true, ...vaultStatus() };
+  });
+
+  ipcMain.handle('vault:set-key', async (event, provider, key) => {
+    if (!isTrustedRenderer(event)) return { ok: false, error: 'Untrusted renderer.' };
+    try {
+      const trimmed = validateVaultKey(provider, key);
+      const vault = readVault();
+      vault.providers[provider] = { key: trimmed, updatedAt: new Date().toISOString() };
+      const storage = writeVault(vault);
+      const synced = await pushCredentialToServer(provider, trimmed);
+      return { ok: true, storage, synced, ...vaultStatus() };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipcMain.handle('vault:remove-key', async (event, provider) => {
+    if (!isTrustedRenderer(event)) return { ok: false, error: 'Untrusted renderer.' };
+    try {
+      if (!VAULT_PROVIDERS.has(provider)) return { ok: false, error: 'Unknown credential provider.' };
+      const vault = readVault();
+      delete vault.providers[provider];
+      const storage = writeVault(vault);
+      const synced = await removeCredentialFromServer(provider);
+      return { ok: true, storage, synced, ...vaultStatus() };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
 }
 
 function stopServer() {
@@ -468,6 +639,7 @@ if (!gotLock) {
     });
     try {
       await ensureServer();
+      await syncVaultToServer();
       applyProductionCsp();
       registerIpc();
       buildMenu();

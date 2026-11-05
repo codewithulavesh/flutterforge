@@ -23,6 +23,7 @@ import type {
   AgentPlan,
   ValidationReport,
 } from './types';
+import { AgentPlanner } from './planner';
 
 const HARNESS_URL =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_HARNESS_API_URL) ||
@@ -87,6 +88,19 @@ export interface SSEDoneEvent {
   sessionId?: string;
   workspace?: string;
   summary?: string;
+  route?: HarnessRouting;
+}
+
+/** The model route the local engine actually used (keys never included). */
+export interface HarnessRouting {
+  requestedRole: 'frontier' | 'economy';
+  role: 'frontier' | 'economy';
+  entitled: boolean;
+  provider: string;
+  model: string;
+  keySource: string;
+  downgraded: boolean;
+  reason: string;
 }
 
 export interface HarnessCapabilities {
@@ -106,6 +120,7 @@ export type StreamEvent =
   | { type: 'files_merged'; data: SSEFilesMergedEvent }
   | { type: 'validation'; data: SSEValidationEvent }
   | { type: 'chat_answer'; data: { answer: string } }
+  | { type: 'routing'; data: HarnessRouting }
   | { type: 'error'; data: { message: string; code?: string } }
   | { type: 'done'; data: SSEDoneEvent };
 
@@ -174,10 +189,13 @@ export class HarnessClient {
       })),
       api_key: options.modelConfig?.apiKey ?? '',
       model_name: options.modelConfig?.modelName ?? null,
+      task_role: options.modelRole ?? (isIncremental ? 'economy' : 'frontier'),
+      plan: options.plan ?? 'free',
       state_management: options.stateManagement ?? 'provider',
       mode: isIncremental ? 'edit' : 'new',
       is_initial_generation: !isIncremental,
       include_sql_migrations: options.includeSqlMigrations !== false,
+      design_brief: options.designBrief ?? this.deriveDesignBrief(prompt, context, isIncremental),
     };
 
     const response = await fetch(this.url('/api/harness/stream'), {
@@ -199,6 +217,17 @@ export class HarnessClient {
     }
 
     yield* this._readSSE(response);
+  }
+
+  /**
+   * Derive the project's design contract from the original brief. Incremental
+   * edits reuse the first user turn so an app never changes identity midway;
+   * the server also persists the brief per workspace.
+   */
+  private deriveDesignBrief(prompt: string, context: AgentContext, isIncremental: boolean) {
+    const historySeed = context.conversationHistory.find((message) => message.role === 'user')?.content;
+    const seed = isIncremental && historySeed ? historySeed : prompt;
+    return AgentPlanner.planDesign(seed, AgentPlanner.detectDomain(seed.toLowerCase()));
   }
 
   /** Cancel/reset the persisted session and workspace for a project. */
@@ -428,6 +457,23 @@ export async function runFlutterSupabaseAgentHarness(
 
         case 'chat_answer': {
           harnessSummary = (event.data as { answer: string }).answer;
+          break;
+        }
+
+        case 'routing': {
+          const route = event.data as HarnessRouting;
+          const synthetic: AgentEvent & { node?: string } = {
+            phase: 'planning',
+            stepNumber: 1,
+            totalSteps: 7,
+            node: 'model_route',
+            message: `${route.role === 'frontier' ? 'Frontier' : 'Fast'} route · ${route.provider} · ${route.model}${route.downgraded ? ' (downgraded)' : ''}`,
+            detail: route.reason,
+            timestamp: new Date().toISOString(),
+          };
+          addAgentEvent(synthetic as SSEAgentEvent);
+          options.onEvent?.(synthetic);
+          logs.push(`[ROUTE] ${route.role} ${route.provider}/${route.model} — ${route.reason}`);
           break;
         }
 

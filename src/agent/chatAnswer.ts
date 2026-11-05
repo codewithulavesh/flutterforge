@@ -8,7 +8,7 @@
 
 import { OpenRouterClient, budgetHistory, type LLMMessage } from './llmClient';
 import { keyPool } from './keyPool';
-import { supabase } from '@/services/supabase';
+import { supabase } from '../services/supabase';
 
 const CHAT_SYSTEM_PROMPT = `
 You are the FlutterForge in-workspace assistant: friendly, concise, expert in
@@ -135,10 +135,11 @@ export async function answerGeneralQuestion(
   try {
     const reply = (await client.chatStream(messages, {
       temperature: 0.7,
-      maxTokens: 1500,
-      idleTimeoutMs: 15000,
-      timeoutMs: 45000,
+      maxTokens: 2500,
+      idleTimeoutMs: 30000,
+      timeoutMs: 90000,
       onToken: ctx.onToken,
+      onReasoning: () => ctx.onProgress?.('Thinking…'),
       onRetry: ctx.onRetry,
       signal: ctx.signal,
     })).trim();

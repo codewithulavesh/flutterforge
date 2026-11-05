@@ -117,6 +117,11 @@
 
   html {
     overflow-x: hidden;
+  }
+
+  /* Lenis owns the scroll position on the landing page; native smooth
+     scrolling would re-animate every frame it writes. */
+  html:not(.lenis) {
     scroll-behavior: smooth;
   }
 
@@ -518,12 +523,8 @@
 
 /* ── Landing polish: professional depth, motion and brand glow ─────────────── */
 
-html {
-  scroll-behavior: smooth;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  html {
+  html:not(.lenis) {
     scroll-behavior: auto;
   }
 }

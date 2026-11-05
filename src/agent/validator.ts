@@ -4,8 +4,12 @@ export class AgentValidator {
   /**
    * Validates all generated files for Flutter, Dart, Supabase and YAML compliance
    */
-  public static validate(files: AgentFileArtifact[]): ValidationReport {
+  public static validate(files: AgentFileArtifact[], options?: { usesSupabase?: boolean }): ValidationReport {
     const issues: ValidationIssue[] = [];
+
+    const usesSupabase = options?.usesSupabase !== undefined
+      ? options.usesSupabase
+      : files.some(f => f.content.includes('package:supabase_flutter/') || f.content.includes('supabase_flutter:'));
 
     // 1. Validate pubspec.yaml
     const pubspec = files.find((f) => f.path === 'pubspec.yaml');
@@ -21,7 +25,7 @@ export class AgentValidator {
         autoFixAvailable: false,
       });
     } else {
-      this.validatePubspec(pubspec, issues);
+      this.validatePubspec(pubspec, issues, usesSupabase);
     }
 
     // 2. Validate main.dart
@@ -36,7 +40,7 @@ export class AgentValidator {
         autoFixAvailable: false,
       });
     } else {
-      this.validateMainDart(mainDart, issues);
+      this.validateMainDart(mainDart, issues, usesSupabase);
     }
 
     // 3. Validate each Dart file
@@ -67,12 +71,20 @@ export class AgentValidator {
   /**
    * Performs automated self-healing on detected issues
    */
-  public static autoHeal(files: AgentFileArtifact[], report: ValidationReport): {
+  public static autoHeal(
+    files: AgentFileArtifact[],
+    report: ValidationReport,
+    options?: { usesSupabase?: boolean }
+  ): {
     healedFiles: AgentFileArtifact[];
     report: ValidationReport;
   } {
     const healed = [...files];
     const fixedIssues: Array<{ issue: ValidationIssue; fixDescription: string }> = [];
+
+    const usesSupabase = options?.usesSupabase !== undefined
+      ? options.usesSupabase
+      : healed.some((f) => f.content.includes('package:supabase_flutter/') || f.content.includes('supabase_flutter:'));
 
     const usesRiverpod =
       healed.some((f) => f.path.endsWith('.dart') && f.content.includes('flutter_riverpod')) ||
@@ -88,7 +100,6 @@ export class AgentValidator {
         pubspecContent.includes('provider:');
 
       const knownVersions: Record<string, string> = {
-        supabase_flutter: '^2.8.3',
         go_router: '^14.8.1',
         google_fonts: '^6.2.1',
         flutter_animate: '^4.5.2',
@@ -103,8 +114,14 @@ export class AgentValidator {
         uuid: '^4.5.1',
         path_provider: '^2.1.5',
       };
+      if (usesSupabase) knownVersions['supabase_flutter'] = '^2.8.3';
       if (usesRiverpod) knownVersions['flutter_riverpod'] = '^2.6.1';
       if (usesProvider || !usesRiverpod) knownVersions['provider'] = '^6.1.2';
+
+      const baseRequired = usesRiverpod
+        ? ['go_router', 'flutter_riverpod', 'flutter_animate']
+        : ['go_router', 'provider', 'flutter_animate'];
+      const requiredPackages = usesSupabase ? ['supabase_flutter', ...baseRequired] : baseRequired;
 
       // Also discover any undeclared packages imported in Dart files
       const undeclared = this.findUndeclaredImports(healed, pubspecContent);
@@ -114,8 +131,11 @@ export class AgentValidator {
         }
       }
 
+      const depsToEnsure = new Set<string>([...requiredPackages, ...undeclared]);
+
       let changed = false;
-      for (const [dep, version] of Object.entries(knownVersions)) {
+      for (const dep of depsToEnsure) {
+        const version = knownVersions[dep] || 'any';
         if (!new RegExp(`^ {2}${dep}\\s*:`, 'm').test(pubspecContent)) {
           // Robust injection under dependencies:
           if (/^dependencies:\s*$/m.test(pubspecContent)) {
@@ -380,7 +400,7 @@ export class AgentValidator {
     };
   }
 
-  private static validatePubspec(file: AgentFileArtifact, issues: ValidationIssue[]) {
+  private static validatePubspec(file: AgentFileArtifact, issues: ValidationIssue[], usesSupabase: boolean = true) {
     const ownName = (file.content.match(/^name\s*:\s*([A-Za-z0-9_]+)/m)?.[1] || '').trim();
     // A package can never depend on itself (LLMs derive this from the app
     // name) — version solving fails outright.
@@ -395,9 +415,12 @@ export class AgentValidator {
       });
     }
     const usesRiverpod = file.content.includes('flutter_riverpod');
-    const requiredPackages = usesRiverpod
-      ? ['supabase_flutter', 'go_router', 'flutter_riverpod', 'flutter_animate']
-      : ['supabase_flutter', 'go_router', 'provider', 'flutter_animate'];
+    const baseRequired = usesRiverpod
+      ? ['go_router', 'flutter_riverpod', 'flutter_animate']
+      : ['go_router', 'provider', 'flutter_animate'];
+    const requiredPackages = usesSupabase
+      ? ['supabase_flutter', ...baseRequired]
+      : baseRequired;
     for (const pkg of requiredPackages) {
       if (!file.content.includes(pkg)) {
         issues.push({
@@ -430,8 +453,8 @@ export class AgentValidator {
     }
   }
 
-  private static validateMainDart(file: AgentFileArtifact, issues: ValidationIssue[]) {
-    if (!file.content.includes('Supabase.initialize')) {
+  private static validateMainDart(file: AgentFileArtifact, issues: ValidationIssue[], usesSupabase: boolean = true) {
+    if (usesSupabase && !file.content.includes('Supabase.initialize')) {
       issues.push({
         filePath: file.path,
         severity: 'warning',
@@ -498,6 +521,58 @@ export class AgentValidator {
         severity: 'warning',
         code: 'CONTAINS_STUBS',
         message: `File contains stub or placeholder comments that should be fully implemented.`,
+        autoFixAvailable: false,
+      });
+    }
+
+    this.validateUiQuality(file, issues);
+  }
+
+  /**
+   * Deterministic design/UX checks for generated screens: token drift,
+   * placeholder copy and missing loading/empty/error states.
+   */
+  private static validateUiQuality(file: AgentFileArtifact, issues: ValidationIssue[]) {
+    const isUiFile = /^lib\/(screens|features)\//.test(file.path)
+      && /extends\s+(StatelessWidget|StatefulWidget|ConsumerWidget|HookWidget)/.test(file.content);
+    if (!isUiFile) return;
+
+    if (/Color\(0xFF[0-9A-Fa-f]{6}\)|Color\.fromARGB\(/.test(file.content)) {
+      issues.push({
+        filePath: file.path,
+        severity: 'warning',
+        code: 'HARDCODED_COLOR',
+        message: 'Screen hardcodes a color. Use Theme.of(context).colorScheme or AppTheme tokens.',
+        suggestion: 'Replace literal colors with colorScheme roles or AppTokens.',
+        autoFixAvailable: false,
+      });
+    }
+
+    if (/\blorem ipsum\b|\bcoming soon\b|\bItem\s+\d+\b/i.test(file.content)) {
+      issues.push({
+        filePath: file.path,
+        severity: 'warning',
+        code: 'PLACEHOLDER_COPY',
+        message: 'Screen contains placeholder copy. Write real content from the brief.',
+        autoFixAvailable: false,
+      });
+    }
+
+    const loadsData = /Supabase\.instance|\.from\(|\.stream\(|\bawait\s+/.test(file.content);
+    if (!loadsData) return;
+
+    const missing = [
+      /CircularProgressIndicator|LinearProgressIndicator|Shimmer|Skeleton|isLoading|loading\s*[:=]/i.test(file.content) ? null : 'loading',
+      /\bisEmpty\b|\bEmptyState\b|\bempty\b/i.test(file.content) ? null : 'empty',
+      /\bcatch\s*\(|\bhasError\b|\berrorMessage\b|SnackBar|errorText/.test(file.content) ? null : 'error',
+    ].filter(Boolean);
+
+    if (missing.length > 0) {
+      issues.push({
+        filePath: file.path,
+        severity: 'warning',
+        code: 'MISSING_UI_STATES',
+        message: `Data screen has no ${missing.join(', ')} state. Add all three before shipping.`,
         autoFixAvailable: false,
       });
     }

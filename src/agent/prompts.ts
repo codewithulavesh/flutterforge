@@ -49,15 +49,35 @@ Your primary goal is to build beautiful, robust, pixel-perfect, scalable, and re
    - Always include database triggers and functions for complex business logic (e.g., updated_at trigger).
 
 3. UI/UX & MODERN VISUAL EXCELLENCE:
-   - Modern Material 3 aesthetic: Rich harmonious palettes, soft drop shadows, rounded pill chips, subtle border strokes.
-   - Animations with \`flutter_animate\`: Use on EVERY list item, card, and screen transition:
-     - List items: \`.animate().fadeIn(delay: Duration(milliseconds: 50 * index)).slideY(begin: 0.05)\`
-     - Cards: \`.animate().scale(begin: Offset(0.95, 0.95)).fadeIn()\`
-     - Page transitions: Hero animations between list and detail screens
-     - Micro-interactions: AnimatedContainer for toggles, AnimatedOpacity for state changes
-   - Skeleton Shimmer Loading: Provide shimmer skeleton loading states for EVERY list view and card. Wrap items in a shimmer widget during loading.
-   - Glassmorphism & Cards: Use frosted glass cards with \`BackdropFilter\` or subtle elevation \`BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 16)\`.
-   - NEVER use plain CircularProgressIndicator alone. Always combine with shimmer or skeleton UI.
+   - THE DESIGN BRIEF IS THE ONLY SOURCE OF VISUAL TRUTH. The plan includes a
+     \`design\` object: palette, typography, spacing scale, radius scale, motion
+     language and copy voice. Every screen must look like it came from the same
+     studio. Never invent a second palette or a second font pairing.
+   - \`lib/core/theme/app_theme.dart\` exposes \`AppTokens\` (spacing, radii,
+     durations, curve) and \`AppTheme\` (light/dark ColorSchemes and TextTheme).
+     Screens MUST read colors via \`Theme.of(context).colorScheme\`, surfaces via
+     \`Theme.of(context).cardTheme\`, type via \`Theme.of(context).textTheme\`, and
+     rhythm via \`AppTokens\`. NEVER write \`Color(0xFF...)\` or raw hex in a screen.
+   - Type hierarchy: use the theme's display/headline styles for page titles and
+     section headers, title styles for cards, body styles for prose, label styles
+     for actions. Do not set fontFamily or font sizes per widget.
+   - Spacing: use the AppTokens spacing scale for all padding, gaps and section
+     rhythm. No magic numbers like 13, 17 or 27.
+   - Dark mode is designed, not inverted: use the brief's dark background,
+     surface and ink tokens. NEVER use pure black or pure white as a page color.
+   - Avoid the generic AI look: no purple-blue gradient walls, no glass cards on
+     every surface, no emoji as icons, no three identical icon-and-paragraph
+     feature cards. Choose one signature surface treatment and keep the rest quiet.
+   - Use real, specific content from the user's brief (product names, prices,
+     titles, places). NEVER use Lorem Ipsum or placeholder "Item 1" copy.
+   - Animations with \`flutter_animate\`, applied deliberately: one entrance per
+     screen/list (staggered 30-50ms), micro-interactions on press, shared element
+     or slide route transitions. Use \`AppTokens.motionFast\`/\`motionBase\`/\`motionSlow\`
+     and \`AppTokens.curve\`. If \`MediaQuery.disableAnimationsOf(context)\` is true,
+     skip decorative animation. Do not animate everything at once.
+   - Loading: shimmer skeletons that match the final layout, not a lone spinner.
+     Empty: a short explanation plus the action that fills the screen.
+     Error: what failed, why, and a retry control. All three are required.
 
 4. RESPONSIVE & ADAPTIVE DESIGN:
    - Use \`LayoutBuilder\` or \`MediaQuery\` for responsive breakpoints:
@@ -257,7 +277,12 @@ CRITICAL INSTRUCTIONS:
    \`\`\`sql filepath="supabase/migrations/001_initial_schema.sql"
    -- Complete SQL with RLS
    \`\`\`
-4. Use Material 3 design tokens, flutter_animate for micro-animations.
+4. Use the plan's \`design\` brief as the only source of visual truth.
+   \`app_theme.dart\` must expose \`AppTokens\` (spacing, radius, motion) and both
+   light/dark themes built from the brief palette and typography. Screens must
+   use \`Theme.of(context)\` and \`AppTokens\`; never hardcode hex colors, font
+   families or magic spacing numbers inside a screen. Use flutter_animate for
+   deliberate entrances and micro-interactions, gated by reduced-motion.
 5. Use Supabase patterns: auth, realtime subscriptions, RLS policies on all tables.
 6. All imports must be correct and reference files that exist in this project.
 7. Generate pubspec.yaml with ALL dependencies used in the Dart code.
@@ -283,8 +308,14 @@ CRITICAL INSTRUCTIONS:
 12. Every app MUST include a working Dark/Light/System theme toggle
     (ThemeMode + ValueNotifier/Provider, persisted with shared_preferences,
     toggle button in AppBar and Profile/Settings), with BOTH lightTheme and
-    darkTheme defined — default seed color #02AFB9 (teal) with #F07067 accent
-    unless the plan specifies otherwise.
+    darkTheme defined from the plan's design brief — never substitute a second
+    palette or the old teal/coral default when the brief specifies otherwise.
+13. Every screen must include real loading, empty and error states. Loading is
+    a layout-matched shimmer, empty explains the next action, error says what
+    failed and offers retry. No screen may ship with only the success path.
+14. Write real content from the user's brief: real names, real labels, real
+    prices and real destinations. Never use Lorem Ipsum, "Item 1" or
+    "Coming soon" as final copy.
 `.trim();
 
 export const INCREMENTAL_EDIT_PROMPT = `

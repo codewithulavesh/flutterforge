@@ -2,8 +2,36 @@
   command = "npm run build"
   publish = "dist"
 
-# VITE_PREVIEW_API_URL points at the local preview compiler (http://localhost:3001).
-# It is a public URL, not a credential, but Netlify's secrets scanner flags any
-# configured env var value found in docs/build output. Exempt only this key.
 [build.environment]
   SECRETS_SCAN_OMIT_KEYS = "VITE_PREVIEW_API_URL"
+
+# ── Backend Proxy to Your Machine (Cloudflare Tunnel) ───────────────
+[[redirects]]
+  from = "/api/*"
+  to = "https://garage-sofa-tested-controls.trycloudflare.com/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/preview/*"
+  to = "https://garage-sofa-tested-controls.trycloudflare.com/preview/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/publish/*"
+  to = "https://garage-sofa-tested-controls.trycloudflare.com/publish/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/health"
+  to = "https://garage-sofa-tested-controls.trycloudflare.com/health"
+  status = 200
+  force = true
+
+# ── Single Page Application (SPA) fallback ─────────────────────────
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
